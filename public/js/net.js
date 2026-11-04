@@ -11,7 +11,9 @@ import {
 import { createMatch, resolveShot } from './rules.js';
 
 const STEP = 1 / 240;        // 服务端与本地统一固定步长
-const INTERP_DELAY = 90;     // 客户端插值缓冲 ms
+const INTERP_DELAY = 90;     // 客户端插值缓冲下限 ms（跨境链路会按 RTT 自动放大）
+const INTERP_DELAY_MAX = 260; // 插值缓冲上限 ms，避免高延迟下拖得太久
+const INTERP_HEADROOM = 1.5;  // 缓冲 = RTT * 该系数，留出抖动余量
 const FX_LIFE = 0.9;         // 落袋特效总时长（秒）：球缩入 0.3s，粒子继续飞到 0.9s
 
 /** 由球号 + 袋口坐标算出确定性种子，渲染端据此生成一致的粒子，不必同步粒子状态 */
@@ -156,6 +158,9 @@ export function createNetTransport(url, { onStatus } = {}) {
   let queue = [];
   let buffer = [];             // {ts, balls, potted}
   let lastAimSent = 0;
+  let rtt = 0;                 // 平滑后的往返时延 ms
+  let pingAt = 0;
+  let pingTimer = null;
   let connected = false;
   let error = null;
   let disposed = false;
@@ -173,6 +178,7 @@ export function createNetTransport(url, { onStatus } = {}) {
     roomId: '',
     connected: false,
     error: null,
+    latency: 0,
   };
 
   function send(obj) {
@@ -192,6 +198,12 @@ export function createNetTransport(url, { onStatus } = {}) {
       const savedName = localStorage.getItem('pool_name') || '';
       send({ t: 'hello', name: savedName, room: new URLSearchParams(location.search).get('room') || 'main' });
       send({ t: 'join' });
+      // 周期性测 RTT：插值缓冲按实测延迟自适应，跨境链路才不会频繁丢帧
+      clearInterval(pingTimer);
+      pingTimer = setInterval(() => {
+        pingAt = performance.now();
+        send({ t: 'ping', ts: pingAt });
+      }, 2000);
     };
 
     ws.onmessage = (ev) => {
@@ -202,6 +214,7 @@ export function createNetTransport(url, { onStatus } = {}) {
 
     ws.onclose = () => {
       connected = false;
+      clearInterval(pingTimer);
       if (!disposed && !fatal) {
         onStatus && onStatus('closed');
         setTimeout(() => { if (!disposed && !fatal) connect(); }, 1500);
@@ -283,6 +296,15 @@ export function createNetTransport(url, { onStatus } = {}) {
         queue.push({ kind: 'toast', text: m.text });
         break;
 
+      case 'pong':
+        if (pingAt) {
+          const sample = performance.now() - pingAt;
+          pingAt = 0;
+          // 指数平滑，忽略明显异常的样本
+          if (sample > 0 && sample < 5000) rtt = rtt ? rtt * 0.7 + sample * 0.3 : sample;
+        }
+        break;
+
       case 'over':
         match.phase = 'over';
         match.winner = m.winner;
@@ -332,7 +354,8 @@ export function createNetTransport(url, { onStatus } = {}) {
   /** 相邻两帧插值 */
   function interpolate() {
     if (!buffer.length) return [];
-    const target = performance.now() - INTERP_DELAY;
+    const delay = Math.min(INTERP_DELAY_MAX, Math.max(INTERP_DELAY, rtt * INTERP_HEADROOM));
+    const target = performance.now() - delay;
 
     let a = null, b = null;
     for (let i = 0; i < buffer.length; i++) {
@@ -384,6 +407,7 @@ export function createNetTransport(url, { onStatus } = {}) {
       view.connected = connected;
       view.error = error;
       view.roomId = room;
+      view.latency = Math.round(rtt);
       return view;
     },
     /** 自由球摆放：交给服务端权威落位 */
