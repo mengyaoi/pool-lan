@@ -60,10 +60,52 @@ export function normalizePlace(msg) {
   return { x: num(msg && msg.x), y: num(msg && msg.y) };
 }
 
+/**
+ * 停球快照归一化。出杆方结算后把自己算出的最终球位一起上报，
+ * 服务端只做边界清洗后原样广播，对手据此对齐，避免两端各自补帧造成漂移。
+ */
+export function normalizeSnapshot(snap) {
+  if (!snap || !Array.isArray(snap.balls)) return null;
+  const balls = [];
+  const seen = new Set();
+  for (const b of snap.balls) {
+    const i = Math.trunc(Number(b && b.i));
+    if (!(i >= 0 && i <= 15) || seen.has(i)) continue;
+    const x = Number(b.x), y = Number(b.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    seen.add(i);
+    balls.push({
+      i,
+      x: Math.round(Math.max(-1300, Math.min(1300, x))),
+      y: Math.round(Math.max(-700, Math.min(700, y))),
+      p: b.p ? 1 : 0,
+      r: Math.round((Number(b.r) || 0) * 100) / 100,
+    });
+  }
+  if (!balls.length) return null;
+  const potted = Array.isArray(snap.potted)
+    ? [...new Set(snap.potted.map(Number).filter((id) => Number.isInteger(id) && id > 0 && id <= 15))].slice(0, 15)
+    : [];
+  return { seq: Math.max(0, Math.trunc(Number(snap.seq) || 0)), time: Math.max(0, Math.trunc(Number(snap.time) || 0)), balls, potted };
+}
+
 /** 服务端下行消息构造器：所有房间广播从这里出，改协议时一处生效 */
 export const out = {
   welcome: (seat, room, name) => ({ t: 'welcome', seat, room, name, protocol: PROTOCOL }),
-  room: (room) => ({ t: 'room', id: room.id, players: room.players, phase: room.phase }),
+  room: (room) => ({
+    t: 'room',
+    id: room.id,
+    players: room.players,
+    phase: room.phase,
+    round: room.round,
+    turn: room.turn,
+    group: room.group,
+    open: room.open,
+    winner: room.winner,
+    ballInHand: room.ballInHand,
+    snapshot: room.snapshot || null,
+    shots: room.shots || 0,
+  }),
   start: (breaker, seed, round) => ({ t: 'start', breaker, seed, round }),
   turn: (p) => ({ t: 'turn', p }),
   groups: (group, open) => ({ t: 'groups', group, open }),
@@ -73,6 +115,7 @@ export const out = {
   shot: (seat, shot) => ({ t: 'shot', seat, ...shot }),
   place: (seat, pos) => ({ t: 'place', seat, ...pos }),
   aim: (seat, angle, power) => ({ t: 'aim', seat, angle, power }),
+  result: (r) => ({ t: 'result', ...r }),
   err: (code, msg) => ({ t: 'err', code, msg }),
   pong: (ts) => ({ t: 'pong', ts }),
   peer: (state) => ({ t: 'peer', state }),

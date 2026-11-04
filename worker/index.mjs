@@ -186,7 +186,8 @@ export class RoomDO {
     if (stillServed) return;
 
     const room = await this.load(this.roomId);
-    const events = leavePlayer(room, att.seat);
+    // 浏览器刷新会先断后连：先留座，等重连用同一个 token 拿回原座位和牌局。
+    const events = leavePlayer(room, att.seat, { keepSeat: true });
     this.broadcastAll(events);
     await this.save();
   }

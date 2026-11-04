@@ -6,9 +6,10 @@ import { createRenderer } from './render.js';
 import { createAudio } from './audio.js';
 import { createLocalTransport, createNetTransport } from './net.js';
 import { predictAim, R, BALL_COLORS } from './physics.js';
-import { GROUP_SOLID, GROUP_STRIPE } from './rules.js';
+import { GROUP_SOLID, GROUP_STRIPE, groupRemaining } from './rules.js';
 
-const GROUP_SHORT = { [GROUP_SOLID]: '实心', [GROUP_STRIPE]: '花色', null: '未定', undefined: '未定' };
+// 文案直接写「光球 / 花球」，跟玩家口语一致，避免「实心/花色」看不懂
+const GROUP_SHORT = { [GROUP_SOLID]: '光球 1-7', [GROUP_STRIPE]: '花球 9-15', null: '未定', undefined: '未定' };
 const GROUP_LIST = {
   [GROUP_SOLID]: [1, 2, 3, 4, 5, 6, 7, 8],
   [GROUP_STRIPE]: [9, 10, 11, 12, 13, 14, 15, 8],
@@ -42,6 +43,7 @@ const el = {
   score0: $('#score0'), score1: $('#score1'),
   dots0: $('#dots0'), dots1: $('#dots1'),
   card0: $('#card0'), card1: $('#card1'),
+  task0: $('#task0'), task1: $('#task1'),
   powerFill: $('#powerFill'), powerLabel: $('#powerLabel'),
   powerTrack: $('#powerTrack'),
   toast: $('#toast'), hint: $('#hint'),
@@ -526,6 +528,20 @@ function renderDots(node, group, potted) {
   }
 }
 
+/** 玩家卡片第二行：直接回答「我打哪一组、还剩几颗、下一颗打什么」 */
+function renderTask(node, group, potted) {
+  if (!node) return;
+  if (!group) {
+    node.textContent = '开放球台 · 先打进一颗定组';
+    node.className = 'ptask open';
+    return;
+  }
+  const left = groupRemaining(potted, group);
+  const name = group === GROUP_SOLID ? '光球' : '花球';
+  node.textContent = left.length ? `${name}剩 ${left.length} 颗` : '清台 · 打黑8';
+  node.className = 'ptask ' + (group === GROUP_SOLID ? 'solid' : 'stripe') + (left.length ? '' : ' eight');
+}
+
 function updateHud(v) {
   const m = v.match;
   const pottedAll = m.potted || [];
@@ -535,6 +551,8 @@ function updateHud(v) {
   el.score1.textContent = GROUP_SHORT[g1] || '未定';
   el.score0.className = 'pscore' + (g0 === GROUP_SOLID ? ' g-solid' : g0 === GROUP_STRIPE ? ' g-stripe' : '');
   el.score1.className = 'pscore' + (g1 === GROUP_SOLID ? ' g-solid' : g1 === GROUP_STRIPE ? ' g-stripe' : '');
+  renderTask(el.task0, g0, pottedAll);
+  renderTask(el.task1, g1, pottedAll);
   el.name0.textContent = v.names[0] || '玩家 1';
   el.name1.textContent = v.names[1] || '玩家 2';
   renderDots(el.dots0, m.group ? m.group[0] : null, pottedAll);

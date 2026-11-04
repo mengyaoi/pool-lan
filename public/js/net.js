@@ -6,7 +6,7 @@
  */
 import {
   createWorld, rack15, stepWorld, applyShot, settled, respotCue, respotBall, deserializeWorld,
-  canPlaceCue, placeCue as placeCueWorld,
+  canPlaceCue, placeCue as placeCueWorld, serializeWorld,
 } from './physics.js';
 import { createMatch, resolveShot } from './rules.js';
 import { normalizeShot, normalizePlace, rackSeed } from './protocol.js';
@@ -189,7 +189,16 @@ export function createNetTransport(url, { onStatus } = {}) {
   let error = null;
   let disposed = false;
   let fatal = false;
+  // 座位凭据必须在第一次连接前就生成：服务器按 URL/hello 里的 token 认人，
+  // 如果等 welcome 才生成，首次连接存下的是空 token，刷新后就认不回原座位。
   let token = '';
+  try {
+    token = sessionStorage.getItem('pool_token') || '';
+    if (!token) {
+      token = 't' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      sessionStorage.setItem('pool_token', token);
+    }
+  } catch { token = 't' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
   const view = {
     balls: [],
@@ -228,6 +237,31 @@ export function createNetTransport(url, { onStatus } = {}) {
     queue.push({ kind: 'toast', text: '开局！' });
   }
 
+  /** 用服务端/出杆方的停球快照对齐本地世界（只用于对手端） */
+  function applySnapshot(snap) {
+    if (!world || !snap || !Array.isArray(snap.balls)) return false;
+    const byId = new Map(snap.balls.map((b) => [b.i, b]));
+    for (const b of world.balls) {
+      const s = byId.get(b.id);
+      if (!s) continue;
+      b.x = s.x / 1000; b.y = s.y / 1000;
+      b.vx = 0; b.vy = 0; b.wx = 0; b.wy = 0; b.wz = 0;
+      b.rz = s.r || 0;
+      b.potted = !!s.p;
+    }
+    world.pocketed = (snap.potted || []).slice();
+    world.firstContact = null;
+    world.seq = snap.seq || world.seq;
+    world.time = (snap.time || 0) / 1000;
+    world.events = [];
+    acc = 0;
+    settling = false;
+    markPotted = world.pocketed.slice();
+    // 记分牌跟着权威快照走：母球(0)不算进袋球。
+    match.potted = world.pocketed.filter((id) => id > 0);
+    return true;
+  }
+
   /** 应用一杆（自己发起或对手发起，走同一路径，保证两边算得一样） */
   function applyShotLocal(shot, mine) {
     if (!world) return false;
@@ -252,28 +286,17 @@ export function createNetTransport(url, { onStatus } = {}) {
     const anyHit = firstHit !== null;
     const pottedAll = pottedNow.filter((id) => id !== 0);
 
-    // resolveShot 会从「当前 turn」推进到下一手。非出杆方的 turn 可能已经被
-    // 服务端的 turn 广播改成了下一手，此时再推进一次就会跳过一个人，
-    // 表现为双方都出不了杆。所以先记住推进前的值。
-    const priorTurn = match.turn;
-    const r = resolveShot(match, { newPotted, cuePotted, firstHit, anyHit, pottedAll });
     if (cuePotted) respotCue(world);
-    if (r.respot && r.respot.length) for (const id of r.respot) respotBall(world, id);
     match.potted = pottedAll.slice();
     settling = false;
 
-    // 服务端才是轮次/花色的权威。非出杆方如果比服务端广播更晚结算完，
-    // 自己算出的 turn 会把刚收到的权威值再翻一次（表现为双方都出不了杆）。
-    // 因此：只要服务端已经裁定过，就以服务端的值为准。
-    if (!wasMyShot) {
-      // 非出杆方：轮次以服务端为准；还没收到就用结算前那个值（即出杆方留在此手）。
-      match.turn = serverTurn !== null ? serverTurn : priorTurn;
-      if (!r.over) match.phase = 'aim';
-    }
-    if (serverGroups) {
-      match.group = serverGroups.group;
-      match.open = serverGroups.open;
-    }
+    // 只有出杆方能结算规则；对手端只负责播放物理，等 result 同步。
+    if (!wasMyShot) return null;
+
+    const r = resolveShot(match, { newPotted, cuePotted, firstHit, anyHit, pottedAll });
+    // 只做「重摆」这类物理修正；轮次/花色在 resolveShot 里已算好，随 report 上报。
+    if (r.respot && r.respot.length) for (const id of r.respot) respotBall(world, id);
+    match.potted = pottedAll.slice();
 
     if (!r.over && newPotted.length) queue.push({ kind: 'sfx', name: 'score' });
     else if (!r.over) queue.push({ kind: 'sfx', name: 'turn' });
@@ -285,9 +308,12 @@ export function createNetTransport(url, { onStatus } = {}) {
       open: match.open,
       ballInHand: match.ballInHand,
       turn: match.turn,
+      shots: match.shots,
       over: !!r.over,
       winner: match.winner ?? null,
       hint: r.hint,
+      // 停球后的权威球位。对手收到后直接对齐，不再赌两边补帧完全一致。
+      snapshot: serializeWorld(world),
     };
   }
 
@@ -313,7 +339,7 @@ export function createNetTransport(url, { onStatus } = {}) {
     if (settled(world)) {
       const rep = settleShot();
       // 只有出杆方上报，避免两端同时改服务端状态
-      if (rep.turn !== undefined && wasMyShot) {
+      if (rep) {
         send(rep);
         pendingReport = null;
       }
@@ -323,8 +349,6 @@ export function createNetTransport(url, { onStatus } = {}) {
 
   let waitWarnTimer = null;
   let wasMyShot = false;
-  let serverTurn = null;   // 服务端最近裁定的轮次（权威）
-  let serverGroups = null; // 服务端最近裁定的花色/开放表
 
   /* ---------- 连接 ---------- */
 
@@ -375,17 +399,6 @@ export function createNetTransport(url, { onStatus } = {}) {
         room = m.room;
         view.roomId = room;
         if (m.name) { localStorage.setItem('pool_name', m.name); }
-        // 座位凭据必须是「每个标签唯一且重连不变」：
-        // 用昵称会让同名玩家抢到同一座位，用 localStorage 会让同浏览器的两个标签共用身份。
-        if (!token) {
-          try {
-            token = sessionStorage.getItem('pool_token') || '';
-            if (!token) {
-              token = 't' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-              sessionStorage.setItem('pool_token', token);
-            }
-          } catch { token = 't' + Math.random().toString(36).slice(2); }
-        }
         break;
 
       case 'room': {
@@ -417,6 +430,29 @@ export function createNetTransport(url, { onStatus } = {}) {
           effects = [];
           world = null;
           settling = false;
+        } else if (m.turn !== undefined) {
+          // 重连/刷新后恢复服务端当前轮次与花色，别让自己停留在旧局面。
+          // 刷新时本地还没有 world，必须按房间的回合号重建一张同种子的台面。
+          if (!world || roundNo !== (m.round || 1)) {
+            roundNo = m.round || 1;
+            buildWorld(roundNo);
+          }
+          if (!settling) {
+            match.turn = m.turn;
+            match.ballInHand = m.ballInHand ?? null;
+            match.phase = m.phase === 'over' ? 'over' : 'aim';
+            view.phase = match.phase;
+          }
+          if (Array.isArray(m.group)) {
+            match.group = m.group;
+            match.open = !!m.open;
+          }
+          if (m.snapshot) applySnapshot(m.snapshot);
+          if (typeof m.shots === 'number') match.shots = m.shots;
+          if (m.phase === 'over') {
+            match.winner = m.winner ?? null;
+            view.phase = 'over';
+          }
         }
         break;
       }
@@ -446,17 +482,39 @@ export function createNetTransport(url, { onStatus } = {}) {
         if (Array.isArray(m.group)) {
           match.group = m.group;
           match.open = !!m.open;
-          serverGroups = { group: m.group, open: !!m.open };
         }
         break;
 
       case 'turn':
-        match.turn = m.p;
-        serverTurn = m.p;
-        match.phase = 'aim';
-        view.phase = 'aim';
-        queue.push({ kind: 'sfx', name: 'turn' });
+        // 对手端本地物理可能还在跑：先别改 turn，否则它会按错误出杆人结算。
+        // 真正的落状态统一走 result（服务端在停球后才发）。
+        if (!settling) {
+          match.turn = m.p;
+          match.phase = 'aim';
+          view.phase = 'aim';
+        }
         break;
+
+      case 'result': {
+        // 服务端裁定的唯一结果：轮次 / 花色 / 自由球 / 胜负 / 停球快照。
+        if (m.seat !== seat && m.snapshot) applySnapshot(m.snapshot);
+        if (Array.isArray(m.group)) {
+          match.group = m.group;
+          match.open = !!m.open;
+        }
+        match.ballInHand = m.ballInHand ?? null;
+        if (typeof m.shots === 'number') match.shots = m.shots;
+        if (m.over) {
+          match.phase = 'over';
+          match.winner = m.winner ?? null;
+          view.phase = 'over';
+        } else {
+          match.turn = m.turn;
+          match.phase = 'aim';
+          view.phase = 'aim';
+        }
+        break;
+      }
 
       case 'aim':
         if (m.seat !== seat) view.opponentAim = { angle: m.angle, power: m.power };

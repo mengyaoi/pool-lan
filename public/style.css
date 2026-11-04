@@ -143,6 +143,17 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px;
 }
 
+/* 第二行任务提示：我现在打光球还是花球、还剩几颗 */
+.ptask {
+  font-size: 10px; font-weight: 700; letter-spacing: .2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px;
+  color: var(--ink-mute);
+}
+.ptask.open { color: #9fb3a8; font-weight: 600; }
+.ptask.solid { color: #7cf0b4; }
+.ptask.stripe { color: #ffd88a; }
+.ptask.eight { color: #fff; text-shadow: 0 0 8px rgba(255,255,255,.35); }
+
 /* 花色小球点 */
 .pdots { display: flex; gap: 3px; max-width: 168px; flex-wrap: wrap; align-content: center; }
 .pdots i {
