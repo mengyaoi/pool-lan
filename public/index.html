@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#0a1511">
 <title>双人台球 · 经典八球</title>
 <link rel="stylesheet" href="style.css">
@@ -40,6 +40,19 @@
     <div id="toast"></div>
   </main>
 
+  <section id="rotate" aria-labelledby="rotateTitle">
+    <div class="rotate-card">
+      <div class="rotate-icon" aria-hidden="true"><span class="phone"></span></div>
+      <div class="rotate-copy">
+        <h3 id="rotateTitle">横过来打，球桌才够大</h3>
+        <p>竖屏只能放下压缩后的台面。转到横屏后，球桌、力度条和杆法盘都会完整展开。</p>
+      </div>
+      <button id="btnRotateGo" class="primary">一键全屏横屏</button>
+      <p class="rotate-tip" id="rotateTip">按钮没反应？请打开手机的「自动旋转」，再把手机横过来。</p>
+      <button id="btnRotateSkip" class="linklike">先在竖屏将就玩</button>
+    </div>
+  </section>
+
   <div id="dock">
     <div id="spinbox">
       <canvas id="spin-canvas" width="132" height="132"></canvas>
@@ -60,6 +73,7 @@
 
     <div class="btns">
       <button id="btnLocal" class="ghost">本地双人</button>
+      <button id="btnLandscape" class="ghost">横屏</button>
       <button id="btnSound" class="ghost">音效 开</button>
       <button id="btnRematch" class="primary">重新开局</button>
     </div>

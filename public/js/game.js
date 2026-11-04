@@ -206,6 +206,17 @@ function bindInput() {
   $('#btnRematch').addEventListener('click', () => transport && transport.rematch());
   $('#ovBtn').addEventListener('click', () => { transport && transport.rematch(); });
 
+  $('#btnRotateGo').addEventListener('click', () => { enterLandscape(); });
+  $('#btnRotateSkip').addEventListener('click', () => { dismissRotateGuide(); resize(); });
+  $('#btnLandscape').addEventListener('click', () => {
+    if (portraitMQ.matches) {
+      rotateDismissed = false;
+      syncRotateGuide();
+    } else {
+      showToast('已经是横屏了');
+    }
+  });
+
   $('#btnSound').addEventListener('click', (e) => {
     const on = !audio.enabled;
     audio.setEnabled(on);
@@ -253,6 +264,54 @@ function showToast(text) {
   el.toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.toast.classList.remove('show'), 2600);
+}
+
+/* ------------------------------------------------------------------ */
+/* 横屏引导                                                            */
+/* ------------------------------------------------------------------ */
+const portraitMQ = window.matchMedia('(max-aspect-ratio: 1/1)');
+let rotateDismissed = false;
+
+function syncRotateGuide() {
+  const box = $('#rotate');
+  if (!box) return;
+  const portrait = portraitMQ.matches;
+  // 转回横屏时清掉“先玩着”的状态，下次竖屏还会提醒
+  if (!portrait) rotateDismissed = false;
+  box.classList.toggle('hidden', !portrait || rotateDismissed);
+}
+
+function dismissRotateGuide() {
+  rotateDismissed = true;
+  syncRotateGuide();
+}
+
+/** 优先真正的全屏 + 屏幕方向锁定；不支持时退回“请手动横屏”提示 */
+async function enterLandscape() {
+  const tip = $('#rotateTip');
+  let locked = false;
+
+  try {
+    const root = document.documentElement;
+    if (!document.fullscreenElement && root.requestFullscreen) {
+      await root.requestFullscreen({ navigationUI: 'hide' });
+    }
+  } catch { /* 全屏被拒不影响后面的尝试 */ }
+
+  try {
+    if (screen.orientation && typeof screen.orientation.lock === 'function') {
+      await screen.orientation.lock('landscape');
+      locked = true;
+    }
+  } catch { /* iOS Safari 等不支持锁定 */ }
+
+  if (tip) {
+    tip.textContent = locked
+      ? '已切到横屏。要是没转过来，把手机横一下即可。'
+      : '这台设备不支持自动转屏。请打开系统「自动旋转」，再把手机横过来。';
+  }
+  // 布局在旋转后会跳变几次，多补几次 resize 保证画布尺寸正确
+  [0, 120, 320, 600].forEach((ms) => setTimeout(resize, ms));
 }
 
 function ballDotStyle(id) {
@@ -473,6 +532,16 @@ async function boot() {
   new ResizeObserver(resize).observe($('#stage'));
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  syncRotateGuide();
+  portraitMQ.addEventListener('change', () => {
+    syncRotateGuide();
+    [0, 150, 400].forEach((ms) => setTimeout(resize, ms));
+  });
+  // 键盘/桌面窄窗口也能全屏查看
+  document.addEventListener('fullscreenchange', () => {
+    [0, 150, 400].forEach((ms) => setTimeout(resize, ms));
+  });
 
   requestAnimationFrame(loop);
 }

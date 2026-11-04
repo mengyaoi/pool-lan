@@ -100,6 +100,17 @@ export class RoomDO {
       return new Response(null, { status: 101, webSocket: client });
     }
 
+    // 同一 token 重连时，旧连接若还挂着就必须踢掉：
+    // 否则两个人的收件箱里有一个是僵尸连接，出杆广播会发不到真人。
+    if (r.reconnected) {
+      for (const old of this.state.getWebSockets()) {
+        const att = old.deserializeAttachment() || {};
+        if (att.token === token && att.seat === r.seat) {
+          try { old.close(4000, 'replaced by reconnect'); } catch { }
+        }
+      }
+    }
+
     // 座位信息挂到连接上，休眠唤醒后仍能读回来
     server.serializeAttachment({ seat: r.seat, token });
 
@@ -165,6 +176,15 @@ export class RoomDO {
 
   async webSocketClose(ws) {
     const att = ws.deserializeAttachment() || {};
+    // 重连时我们主动关掉了旧连接。此时同座位已经有新连接在服务，
+    // 不能把这个座位当成「玩家离开」删掉，否则重连的人立刻被踢出房间。
+    const stillServed = this.state.getWebSockets().some((other) => {
+      if (other === ws) return false;
+      const a = other.deserializeAttachment() || {};
+      return a.seat === att.seat && a.token === att.token;
+    });
+    if (stillServed) return;
+
     const room = await this.load(this.roomId);
     const events = leavePlayer(room, att.seat);
     this.broadcastAll(events);
