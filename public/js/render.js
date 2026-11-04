@@ -540,6 +540,34 @@ export function createRenderer(canvas) {
   }
 
   /* ---------------- 对手瞄准射线 ---------------- */
+  /** 被选中的目标球：给一个脉冲高亮环，点完能确认到底对准了哪颗 */
+  function drawTargetRing(balls, id, nowMs) {
+    const b = balls && balls.find((x) => x.id === id && !x.potted);
+    if (!b) return;
+    const px = sx(b.x), py = sy(b.y);
+    const t = ((nowMs != null ? nowMs : performance.now()) % 1200) / 1200;
+    const grow = 1 + t * 0.45;
+    const alpha = 0.85 * (1 - t);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(px, py, R * scale * 1.35 * grow, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,225,120,${alpha})`;
+    ctx.lineWidth = Math.max(2, scale * 0.005);
+    ctx.shadowColor = 'rgba(255,214,90,0.9)';
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(px, py, R * scale * 1.22, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,225,120,0.85)';
+    ctx.lineWidth = Math.max(1.6, scale * 0.0036);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawOpponentRay(cuePos, angle) {
     if (!Number.isFinite(angle)) return;
     const px = sx(cuePos.x), py = sy(cuePos.y);
@@ -860,6 +888,7 @@ export function createRenderer(canvas) {
       drawOpponentRay(cue, state.opponentAim.angle);
     }
     if (state.aim && state.aim.pred && cue) {
+      if (state.aim.targetId != null) drawTargetRing(state.balls, state.aim.targetId, state.now);
       drawAimLine(cue, state.aim.pred, 0.55);
       if (state.aim.showCue) drawCue(cue, state.aim.angle, state.aim.power);
     }

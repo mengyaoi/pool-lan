@@ -48,11 +48,24 @@ const el = {
   spinHint: $('#spinHint'),
 };
 
+/** 找出触点附近最近的一颗目标球（不含母球/已落袋），用于「点球瞄准」 */
+function nearestBall(balls, world, radius) {
+  let best = null, bestD = Infinity;
+  for (const b of balls) {
+    if (b.potted || b.id === 0) continue;
+    const d = Math.hypot(b.x - world.x, b.y - world.y);
+    if (d <= radius && d < bestD) { bestD = d; best = b; }
+  }
+  return best;
+}
+
 let transport = null;
 let view = null;                      // 本帧缓存（getter 会推进物理，每帧只取一次）
 let aim = { angle: 0, power: 0, spin: { a: 0, b: 0 }, pred: null, showCue: true };
 let dragging = false;
 let dragStart = { x: 0, y: 0 };
+let dragMode = null;                  // 'aim' = 拖动改角度，'power' = 后拉蓄力
+let aimLockedBallId = null;           // 最近一次点中的目标球（只用于提示）
 let placing = false;                  // 自由球：正在拖动母球摆位
 let placePos = { x: 0, y: 0 };
 let toastTimer = null;
@@ -165,7 +178,23 @@ function bindInput() {
     }
 
     if (!view.canShoot) return;
+    const cue = view.balls.find((b) => b.id === 0 && !b.potted);
+    if (!cue) return;
+    const w = renderer.screenToWorld(p.x, p.y);
+
+    // 触摸屏没有 hover：按下即瞄准。点中哪颗球就对哪颗球，点空处就对那个点。
+    // 命中半径放大到 2.2 个球径，手指略偏也能选中。
+    const target = nearestBall(view.balls, w, R * 2.2);
+    const tx = target ? target.x : w.x;
+    const ty = target ? target.y : w.y;
+    const dx = tx - cue.x, dy = ty - cue.y;
+    if (Math.hypot(dx, dy) > R * 0.6) {
+      aim.angle = Math.atan2(dy, dx);
+      aimLockedBallId = target ? target.id : null;
+    }
+
     dragging = true;
+    dragMode = 'pending';            // 先看手指往哪走：横向 = 调方向，后拉 = 蓄力
     dragStart = p;
     aim.power = 0;
     try { canvas.setPointerCapture(e.pointerId); } catch { }
@@ -185,10 +214,32 @@ function bindInput() {
     if (!cue) return;
 
     if (dragging) {
-      const d = Math.hypot(p.x - dragStart.x, p.y - dragStart.y);
-      const maxD = Math.max(60, Math.min(renderer.size.w, renderer.size.h) * 0.42);
-      aim.power = Math.min(1, d / maxD);
-    } else if (view.canShoot) {
+      const maxD = Math.max(54, Math.min(renderer.size.w, renderer.size.h) * 0.4);
+      const ax = Math.cos(aim.angle), ay = -Math.sin(aim.angle);   // 屏幕坐标的瞄准方向
+      const dx = p.x - dragStart.x, dy = p.y - dragStart.y;
+      const pull = dx * ax + dy * ay;                              // 沿瞄准方向（向前为正）
+      const lateral = Math.abs(dx * ay - dy * ax);                 // 垂直方向偏移
+
+      if (dragMode === 'pending') {
+        if (-pull > 10) dragMode = 'power';
+        else if (lateral > 12) dragMode = 'aim';
+      }
+
+      if (dragMode === 'aim') {
+        // 按住滑动微调方向：把杆指向手指，同时保持不蓄力
+        const cs = renderer.worldToScreen(cue.x, cue.y);
+        const wx = p.x - cs.x, wy = cs.y - p.y;
+        if (Math.hypot(wx, wy) > R * 0.6) {
+          aim.angle = Math.atan2(wy, wx);
+          aimLockedBallId = null;
+        }
+        aim.power = 0;
+      } else if (dragMode === 'power') {
+        // 后拉蓄力：只认「瞄准反方向」的位移，往前推不会误出杆
+        aim.power = Math.min(1, Math.max(0, -pull) / maxD);
+      }
+    } else if (view.canShoot && e.pointerType === 'mouse') {
+      // 桌面保留 hover 瞄准；触屏走 pointerdown 定方向
       const w = renderer.screenToWorld(p.x, p.y);
       const dx = w.x - cue.x, dy = w.y - cue.y;
       if (Math.hypot(dx, dy) > R * 0.9) aim.angle = Math.atan2(dy, dx);
@@ -205,6 +256,7 @@ function bindInput() {
     }
     if (!dragging) return;
     dragging = false;
+    dragMode = null;
     if (aim.power > 0.05 && view && view.canShoot && view.phase === 'aim') {
       transport.shoot({ angle: aim.angle, power: aim.power, spin: { ...aim.spin } });
       aim.power = 0;
@@ -521,7 +573,7 @@ function loop() {
   const nowMs = performance.now();
   renderer.render({
     balls: drawBalls,
-    aim,
+    aim: { ...aim, targetId: aimLockedBallId },
     opponentAim: view.opponentAim,
     isMyTurn: view.canShoot,
     effects: collectEffects(nowMs),
