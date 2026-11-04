@@ -2,7 +2,7 @@
  * server.js — 零依赖联机服务端
  *   · HTTP 静态文件（MIME 白名单 + 路径穿越防护）
  *   · 手写 RFC6455 WebSocket（握手 / 帧解析 / 分片 / ping-pong / close）
- *   · 房间管理 + 服务端权威物理（1/240 固定步长），快照 20Hz 广播
+ *   · 房间管理 + 服务端权威物理（1/240 固定步长），快照 40Hz 广播
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -304,7 +304,7 @@ function finishShot(room) {
 }
 
 /* ================================================================== */
-/* 快照广播（20Hz）                                                   */
+/* 快照广播（40Hz，跨境链路下插值更顺）                              */
 /* ================================================================== */
 setInterval(() => {
   for (const room of rooms.values()) {
@@ -336,7 +336,7 @@ setInterval(() => {
       room.evts = [];
     }
   }
-}, 50);
+}, 25);
 
 /* 房间回收 */
 setInterval(() => {
@@ -585,7 +585,7 @@ server.listen(PORT, '0.0.0.0', () => {
   for (const ip of ips) console.log(`  局域网：    http://${ip}:${PORT}`);
   console.log('');
   console.log('  两台电脑连同一个 WiFi，各自打开上面「局域网」地址即可对战。');
-  console.log(`  台面尺寸 ${TW}m × ${TH}m，服务端物理 ${Math.round(1 / STEP)}Hz，快照 20Hz。`);
+  console.log(`  台面尺寸 ${TW}m × ${TH}m，服务端物理 ${Math.round(1 / STEP)}Hz，快照 40Hz。`);
   console.log('  首次运行 Windows 会弹防火墙提示，请点「允许访问」。');
   console.log('');
 });
