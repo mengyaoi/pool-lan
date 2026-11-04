@@ -1,0 +1,17 @@
+# Render 一键部署配置：双人台球（含 WebSocket 联机 + 静态托管）
+# 用法：在 Render 控制台 New → Web Service → 连 GitHub 仓库 → 选 "Deploy from render.yaml"
+# 或手动填：Runtime=Node / Build=npm install / Start=node server.js / Health=/health
+
+services:
+  - type: web
+    name: pool-lan
+    runtime: node
+    plan: free                 # 免费层即可跑；升级 paid 可常驻不休眠
+    region: singapore          # 离国内近；可选 oregon / frankfurt
+    branch: main               # 按你的默认分支改（如 master）
+    buildCommand: "npm install" # 零依赖，秒过
+    startCommand: "node server.js"
+    healthCheckPath: "/health"  # server.js 已提供 /health 返回 200
+    envVars:
+      - key: NODE_ENV
+        value: production

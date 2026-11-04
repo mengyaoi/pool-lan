@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0a1511">
+<title>双人台球 · 经典八球</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header id="hud">
+    <div class="pcard" id="card0">
+      <div class="avatar">1</div>
+      <div class="pmeta">
+        <div class="pname" id="name0">玩家 1</div>
+        <div class="pdots" id="dots0"></div>
+      </div>
+      <div class="pscore" id="score0">0</div>
+    </div>
+
+    <div id="center">
+      <div id="status">正在连接…</div>
+      <div id="room"></div>
+    </div>
+
+    <div class="pcard" id="card1">
+      <div class="pscore" id="score1">0</div>
+      <div class="pmeta right">
+        <div class="pname" id="name1">玩家 2</div>
+        <div class="pdots" id="dots1"></div>
+      </div>
+      <div class="avatar">2</div>
+    </div>
+  </header>
+
+  <main id="stage">
+    <canvas id="table"></canvas>
+    <div id="toast"></div>
+  </main>
+
+  <div id="dock">
+    <div id="spinbox">
+      <canvas id="spin-canvas" width="132" height="132"></canvas>
+      <div class="spin-meta">
+        <div class="spin-title">杆法</div>
+        <div class="spin-hint" id="spinHint">中心</div>
+      </div>
+    </div>
+
+    <div id="power">
+      <div class="power-head">
+        <span class="plabel">力量</span>
+        <span class="power-label" id="powerLabel">0%</span>
+      </div>
+      <div class="power-track"><div class="power-fill" id="powerFill"></div></div>
+      <div class="hint" id="hint">瞄准后按住往后拉杆松手出杆 · 清完己方花色再打黑8获胜</div>
+    </div>
+
+    <div class="btns">
+      <button id="btnLocal" class="ghost">本地双人</button>
+      <button id="btnSound" class="ghost">音效 开</button>
+      <button id="btnRematch" class="primary">重新开局</button>
+    </div>
+  </div>
+
+  <div id="overlay" class="hidden">
+    <div class="panel">
+      <h2 id="ovTitle">对局结束</h2>
+      <div id="ovScore">0 : 0</div>
+      <p id="ovDesc"></p>
+      <button id="ovBtn" class="primary big">再来一局</button>
+    </div>
+  </div>
+
+</div>
+<script type="module" src="js/game.js"></script>
+</body>
+</html>
