@@ -351,7 +351,17 @@ export function createNetTransport(url, { onStatus } = {}) {
         room = m.room;
         view.roomId = room;
         if (m.name) { localStorage.setItem('pool_name', m.name); }
-        token = token || (m.name ? encodeURIComponent(m.name) : '');
+        // 座位凭据必须是「每个标签唯一且重连不变」：
+        // 用昵称会让同名玩家抢到同一座位，用 localStorage 会让同浏览器的两个标签共用身份。
+        if (!token) {
+          try {
+            token = sessionStorage.getItem('pool_token') || '';
+            if (!token) {
+              token = 't' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+              sessionStorage.setItem('pool_token', token);
+            }
+          } catch { token = 't' + Math.random().toString(36).slice(2); }
+        }
         break;
 
       case 'room': {

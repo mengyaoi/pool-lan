@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
+  "regions": ["hkg1"],
   "buildCommand": "",
   "outputDirectory": "public",
   "cleanUrls": false,
