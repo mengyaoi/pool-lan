@@ -300,6 +300,7 @@ export function createNetTransport(url, { onStatus } = {}) {
     }
   }
 
+  let waitWarnTimer = null;
   let wasMyShot = false;
 
   /* ---------- 连接 ---------- */
@@ -366,6 +367,19 @@ export function createNetTransport(url, { onStatus } = {}) {
 
       case 'room': {
         players = m.players || [];
+        // Vercel 的连接可能落到不同实例，此时两人各看到一个「只有自己」的房间。
+        // 超过 10s 仍未凑齐两人，就明说这个问题，别让用户对着空白球桌干等。
+        if (players.length < 2 && !waitWarnTimer) {
+          waitWarnTimer = setTimeout(() => {
+            if (players.length < 2 && connected) {
+              error = '对手未出现：可能被调度到了不同实例';
+              queue.push({ kind: 'toast', text: '等了 10 秒仍只有你一人 —— 双方可能落在不同实例，刷新重试' });
+            }
+          }, 10000);
+        } else if (players.length >= 2 && waitWarnTimer) {
+          clearTimeout(waitWarnTimer);
+          waitWarnTimer = null;
+        }
         view.names = [0, 1].map((i) => {
           const p = players.find((x) => x.seat === i);
           return p ? p.name : `玩家 ${i + 1}`;
@@ -513,6 +527,8 @@ export function createNetTransport(url, { onStatus } = {}) {
     drain() { const q = queue; queue = []; return q; },
     dispose() {
       disposed = true;
+      clearTimeout(waitWarnTimer);
+      waitWarnTimer = null;
       if (ws) ws.close();
     },
   };

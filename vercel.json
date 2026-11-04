@@ -2,14 +2,13 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "regions": ["hkg1"],
-  "buildCommand": "",
+  "buildCommand": null,
   "outputDirectory": "public",
   "cleanUrls": false,
   "trailingSlash": false,
   "functions": {
     "api/ws.mjs": {
-      "maxDuration": 300,
-      "memory": 1024
+      "maxDuration": 300
     }
   },
   "rewrites": [
