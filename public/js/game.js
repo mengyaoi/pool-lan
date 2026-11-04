@@ -43,6 +43,7 @@ const el = {
   dots0: $('#dots0'), dots1: $('#dots1'),
   card0: $('#card0'), card1: $('#card1'),
   powerFill: $('#powerFill'), powerLabel: $('#powerLabel'),
+  powerTrack: $('#powerTrack'), btnShoot: $('#btnShoot'),
   toast: $('#toast'), hint: $('#hint'),
   overlay: $('#overlay'), ovTitle: $('#ovTitle'), ovScore: $('#ovScore'), ovDesc: $('#ovDesc'),
   spinHint: $('#spinHint'),
@@ -156,6 +157,69 @@ function initSpinPad() {
 /* ------------------------------------------------------------------ */
 /* 输入                                                               */
 /* ------------------------------------------------------------------ */
+/** 力度滑杆：点击/拖动直接设力量，不依赖在台面上做手势 */
+function initPowerSlider() {
+  const track = el.powerTrack;
+  if (!track) return;
+  let active = false;
+
+  // 用元素自身坐标算比例：界面被 CSS 转过 90° 时，外接矩形的宽高是反的
+  const setFromClientX = (clientX, clientY) => {
+    const p = elementPoint(track, clientX, clientY);
+    if (!p.w) return;
+    // 用元素局部坐标的 x 轴：被 CSS 转过 90° 时它仍然是滑轨方向
+    aim.power = Math.min(1, Math.max(0, p.x / p.w));
+    syncPowerHud();
+  };
+
+  track.addEventListener('pointerdown', (e) => {
+    if (!view || !view.canShoot || view.phase !== 'aim') return;
+    active = true;
+    audio.unlock();
+    try { track.setPointerCapture(e.pointerId); } catch { }
+    setFromClientX(e.clientX, e.clientY);
+    e.preventDefault();
+  });
+  track.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    setFromClientX(e.clientX, e.clientY);
+    e.preventDefault();
+  });
+  const stop = () => { active = false; };
+  track.addEventListener('pointerup', stop);
+  track.addEventListener('pointercancel', stop);
+
+  // 键盘也能微调
+  track.addEventListener('keydown', (e) => {
+    if (!view || !view.canShoot) return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') aim.power = Math.min(1, aim.power + 0.05);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') aim.power = Math.max(0, aim.power - 0.05);
+    else return;
+    syncPowerHud();
+    e.preventDefault();
+  });
+}
+
+/** 把 aim.power 同步到力量条与无障碍属性 */
+function syncPowerHud() {
+  const pct = Math.round(aim.power * 100);
+  if (el.powerFill) el.powerFill.style.width = pct + '%';
+  if (el.powerLabel) el.powerLabel.textContent = pct + '%';
+  if (el.powerTrack) el.powerTrack.setAttribute('aria-valuenow', String(pct));
+}
+
+/** 「出杆」按钮：用当前力量和角度真正击球 */
+function fireShot() {
+  if (!view || !transport) return;
+  if (view.phase !== 'aim') return;
+  if (!view.canShoot) { showToast('还没轮到你出杆'); return; }
+  // 没设力量时给一个稳妥的默认值，别让人卡在「点半天没反应」
+  if (aim.power < 0.05) aim.power = 0.5;
+  const ok = transport.shoot({ angle: aim.angle, power: aim.power, spin: { ...aim.spin } });
+  if (ok) { aim.power = 0; syncPowerHud(); }
+  else showToast('这杆没能发出去，等这轮结束再试');
+}
+
 function bindInput() {
   const pos = (e) => elementPoint(canvas, e.clientX, e.clientY);
 
@@ -196,7 +260,7 @@ function bindInput() {
     dragging = true;
     dragMode = 'pending';            // 先看手指往哪走：横向 = 调方向，后拉 = 蓄力
     dragStart = p;
-    aim.power = 0;
+    // 注意：这里不清空力量。手机上常先设力量再点球微调方向，清掉会前功尽弃
     try { canvas.setPointerCapture(e.pointerId); } catch { }
   });
 
@@ -256,20 +320,22 @@ function bindInput() {
     }
     if (!dragging) return;
     dragging = false;
+    const pulled = dragMode === 'power';
     dragMode = null;
-    if (aim.power > 0.05 && view && view.canShoot && view.phase === 'aim') {
+    // 只有真的向后拉过才算出杆；单击/滑动只是瞄准，不能把已设好的力量误打出去
+    if (pulled && aim.power > 0.05 && view && view.canShoot && view.phase === 'aim') {
       transport.shoot({ angle: aim.angle, power: aim.power, spin: { ...aim.spin } });
-      aim.power = 0;
-    } else {
       aim.power = 0;
     }
   };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
-  canvas.addEventListener('pointerleave', () => { if (!dragging && !placing) aim.power = 0; });
+  // 注意：不要在 pointerleave 里清 power。手机抬手后会紧跟 pointerleave，
+  // 一清就把滑杆设好的力量抹掉了，「出杆」于是永远按不动。
 
   $('#btnRematch').addEventListener('click', () => transport && transport.rematch());
   $('#ovBtn').addEventListener('click', () => { transport && transport.rematch(); });
+  $('#btnShoot').addEventListener('click', () => fireShot());
 
   $('#btnRotateGo').addEventListener('click', () => { enterLandscape(); });
   $('#btnRotateSkip').addEventListener('click', () => { dismissRotateGuide(); resize(); });
@@ -458,6 +524,13 @@ function updateHud(v) {
   const pct = Math.round(aim.power * 100);
   el.powerFill.style.width = pct + '%';
   el.powerLabel.textContent = pct + '%';
+  if (el.powerTrack) el.powerTrack.setAttribute('aria-valuenow', String(pct));
+  // 出杆按钮：轮到自己就能按（没设力量时按默认 50% 出杆）
+  if (el.btnShoot) {
+    const canShootNow = v.phase === 'aim' && v.canShoot;
+    el.btnShoot.classList.toggle('off', !canShootNow);
+    el.btnShoot.disabled = !canShootNow;
+  }
 
   if (v.phase === 'over') {
     showOverlay(v);
@@ -597,6 +670,7 @@ function resize() { renderer.resize(); }
 async function boot() {
   spinPad = initSpinPad();
   bindInput();
+  initPowerSlider();
 
   const forcedLocal = new URLSearchParams(location.search).get('local') === '1';
 
