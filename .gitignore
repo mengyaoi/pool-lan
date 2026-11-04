@@ -5,3 +5,7 @@ ui-preview.png
 # Editor / OS noise
 .DS_Store
 *.swp
+
+# Dependencies
+node_modules/
+.vercel/

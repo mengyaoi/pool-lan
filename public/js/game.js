@@ -459,31 +459,16 @@ async function boot() {
   if (forcedLocal || location.protocol === 'file:') {
     switchTransport(createLocalTransport({ names: ['玩家 1', '玩家 2'] }), 'local');
   } else {
-    // 探一下服务端在不在（HTTP /health），不在就本地同屏，别让用户对着黑屏等
-    let online = false;
-    try {
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 1500);
-      const res = await fetch('/health', { signal: ctl.signal, cache: 'no-store' });
-      clearTimeout(timer);
-      online = res.ok;
-    } catch { online = false; }
-
-    if (online) {
-      setStatus('连接服务端中…');
-      switchTransport(createNetTransport(null, {
-        onStatus: (s) => {
-          if (s === 'connected') setStatus('已连接 · 等待双方就位');
-          else if (s === 'closed') setStatus('连接断开，重连中…');
-          else if (s === 'full') setStatus('房间已满 · 换房间号或稍后重试');
-        },
-      }), 'net');
-    } else {
-      switchTransport(createLocalTransport({ names: ['玩家 1', '玩家 2'] }), 'local');
-      showToast('未检测到服务端，已切到本地双人');
-    }
+    // 探测联机服务。Vercel 上 /health 落到函数 api/ws.mjs，返回 { ok: true }。
+    setStatus('连接服务端中…');
+    switchTransport(createNetTransport(null, {
+      onStatus: (s) => {
+        if (s === 'connected') setStatus('已连接 · 等待双方就位');
+        else if (s === 'closed') setStatus('连接断开，重连中…');
+        else if (s === 'full') setStatus('房间已满 · 换房间号或稍后重试');
+      },
+    }), 'net');
   }
-
   resize();
   new ResizeObserver(resize).observe($('#stage'));
   window.addEventListener('resize', resize);

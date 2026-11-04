@@ -9,8 +9,10 @@ import {
   canPlaceCue, placeCue as placeCueWorld,
 } from './physics.js';
 import { createMatch, resolveShot } from './rules.js';
+import { normalizeShot, normalizePlace, rackSeed } from './protocol.js';
 
 const STEP = 1 / 240;        // 服务端与本地统一固定步长
+const PHYS_MAX_STEPS_PER_FRAME = 920; // 单帧最多补算步数（约 3.8s 物理时间），防止后台标签回来时卡死
 const INTERP_DELAY = 90;     // 客户端插值缓冲下限 ms（跨境链路会按 RTT 自动放大）
 const INTERP_DELAY_MAX = 260; // 插值缓冲上限 ms，避免高延迟下拖得太久
 const INTERP_HEADROOM = 1.5;  // 缓冲 = RTT * 该系数，留出抖动余量
@@ -143,28 +145,47 @@ export function createLocalTransport({ names = ['玩家 1', '玩家 2'] } = {}) 
     dispose() {},
   };
 }
-
 /* ================================================================== */
-/* 联机：服务端权威                                                   */
+/* 联机：确定性双端同步                                                */
 /* ================================================================== */
+/**
+ * 与旧版「服务端权威 + 40Hz 快照」的区别（延迟从 2xRTT 降到接近 0）
+ *
+ *   旧版：出杆 → 服务器算物理 → 把球位推回来。看到球动要等一个来回，
+ *         跨境链路下 200ms RTT 就是 400ms 以上的体感延迟。
+ *   新版：出杆 → 本地立刻算 → 同时把「击球参数」发给服务器 → 对手收到后自己算。
+ *         服务器不碰物理，只转发指令并做裁判（轮次/花色/胜负）。
+ *         自己出杆 0 延迟；对手出杆只剩单程 RTT。
+ *
+ * 成立的前提是物理确定性：同一 rack 种子 + 同一击球序列 = 同一结果。
+ * 因此 physics.js 中滑杆的随机抖动已改为 world 上的种子 RNG。
+ */
 export function createNetTransport(url, { onStatus } = {}) {
   let ws = null;
   let seat = -1;
   let room = '';
   let players = [];
   let match = createMatch();
-  match.phase = 'wait';        // 联机模式下没收到快照之前一律是「等待」，别让 UI 误报轮到你了
+  match.phase = 'wait';
   let effects = [];
   let queue = [];
-  let buffer = [];             // {ts, balls, potted}
+  let world = null;            // 本地物理世界（两端各算一份）
+  let roundNo = 0;
+  let seed = 1;
+  let acc = 0;
+  let lastT = 0;
+  let markPotted = [];         // 本杆开始前已进袋的球
+  let settling = false;        // 本地物理是否在跑
+  let pendingReport = null;    // 结算完待上报的结果
   let lastAimSent = 0;
-  let rtt = 0;                 // 平滑后的往返时延 ms
+  let rtt = 0;
   let pingAt = 0;
   let pingTimer = null;
   let connected = false;
   let error = null;
   let disposed = false;
-  let fatal = false;          // 致命错误（如房间满）：停止自动重连，避免刷屏
+  let fatal = false;
+  let token = '';
 
   const view = {
     balls: [],
@@ -185,9 +206,109 @@ export function createNetTransport(url, { onStatus } = {}) {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
   }
 
+  /* ---------- 物理 ---------- */
+
+  function buildWorld(round) {
+    world = createWorld();
+    seed = rackSeed(room, round);
+    world.rng = (seed ^ 0x5bf03635) >>> 0;
+    rack15(world, seed);
+    acc = 0;
+    lastT = performance.now();
+    markPotted = [];
+    settling = false;
+    pendingReport = null;
+    Object.assign(match, createMatch());
+    match.phase = 'aim';
+    effects = [];
+    queue.push({ kind: 'toast', text: '开局！' });
+  }
+
+  /** 应用一杆（自己发起或对手发起，走同一路径，保证两边算得一样） */
+  function applyShotLocal(shot, mine) {
+    if (!world) return false;
+    markPotted = world.pocketed.slice();
+    const r = applyShot(world, shot);
+    if (!r.ok) return false;
+    match.phase = 'run';
+    settling = true;
+    acc = 0;
+    lastT = performance.now();
+    queue.push({ kind: 'sfx', name: r.miscue ? 'miscue' : 'cue' });
+    if (r.miscue) queue.push({ kind: 'toast', text: '滑杆了！击球点太靠边' });
+    return true;
+  }
+
+  /** 停稳后做规则结算；轮到自己出杆的那端负责把结果上报 */
+  function settleShot() {
+    const pottedNow = world.pocketed.slice();
+    const newPotted = pottedNow.filter((id) => id !== 0 && !markPotted.includes(id));
+    const cuePotted = pottedNow.includes(0);
+    const firstHit = world.firstContact;
+    const anyHit = firstHit !== null;
+    const pottedAll = pottedNow.filter((id) => id !== 0);
+
+    const r = resolveShot(match, { newPotted, cuePotted, firstHit, anyHit, pottedAll });
+    if (cuePotted) respotCue(world);
+    if (r.respot && r.respot.length) for (const id of r.respot) respotBall(world, id);
+    match.potted = pottedAll.slice();
+    settling = false;
+
+    if (!r.over && newPotted.length) queue.push({ kind: 'sfx', name: 'score' });
+    else if (!r.over) queue.push({ kind: 'sfx', name: 'turn' });
+    queue.push({ kind: 'toast', text: r.hint });
+
+    return {
+      t: 'report',
+      group: match.group,
+      open: match.open,
+      ballInHand: match.ballInHand,
+      turn: match.turn,
+      over: !!r.over,
+      winner: match.winner ?? null,
+      hint: r.hint,
+    };
+  }
+
+  /**
+   * 每帧推进本地物理。
+   *
+   * 一致性来自「固定步长 + 确定性的 stepWorld」，与推进速率无关：
+   * 每一步的输入状态完全相同，所以无论分几次跑完，停稳后的局面逐字节一致。
+   * 因此这里按真实时间补算步数——后台标签被节流回 1fps 时也能一次追平，
+   * 不会出现两边一格一格慢慢错开的问题。
+   */
+  function physicsTick() {
+    if (!world || !settling) return;
+    const now = performance.now();
+    const elapsed = Math.min(now - lastT, 5000);
+    lastT = now;
+    acc += elapsed / 1000;
+    let steps = Math.floor(acc / STEP);
+    if (steps > PHYS_MAX_STEPS_PER_FRAME) steps = PHYS_MAX_STEPS_PER_FRAME;
+    acc -= steps * STEP;
+    if (acc < 0) acc = 0;
+    for (let i = 0; i < steps && !settled(world); i++) stepWorld(world, STEP);
+    if (settled(world)) {
+      const rep = settleShot();
+      // 只有出杆方上报，避免两端同时改服务端状态
+      if (rep.turn !== undefined && wasMyShot) {
+        send(rep);
+        pendingReport = null;
+      }
+      wasMyShot = false;
+    }
+  }
+
+  let wasMyShot = false;
+
+  /* ---------- 连接 ---------- */
+
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = url || `${proto}//${location.host}`;
+    const wantRoom = new URLSearchParams(location.search).get('room') || 'main';
+    const base = url || `${proto}//${location.host}/api/ws`;
+    const wsUrl = `${base}?room=${encodeURIComponent(wantRoom)}&token=${encodeURIComponent(token)}`;
     onStatus && onStatus('connecting');
     ws = new WebSocket(wsUrl);
 
@@ -196,9 +317,8 @@ export function createNetTransport(url, { onStatus } = {}) {
       error = null;
       onStatus && onStatus('connected');
       const savedName = localStorage.getItem('pool_name') || '';
-      send({ t: 'hello', name: savedName, room: new URLSearchParams(location.search).get('room') || 'main' });
+      send({ t: 'hello', name: savedName, room: wantRoom, token });
       send({ t: 'join' });
-      // 周期性测 RTT：插值缓冲按实测延迟自适应，跨境链路才不会频繁丢帧
       clearInterval(pingTimer);
       pingTimer = setInterval(() => {
         pingAt = performance.now();
@@ -230,7 +350,8 @@ export function createNetTransport(url, { onStatus } = {}) {
         seat = m.seat;
         room = m.room;
         view.roomId = room;
-        if (m.name) localStorage.setItem('pool_name', m.name);
+        if (m.name) { localStorage.setItem('pool_name', m.name); }
+        token = token || (m.name ? encodeURIComponent(m.name) : '');
         break;
 
       case 'room': {
@@ -239,7 +360,6 @@ export function createNetTransport(url, { onStatus } = {}) {
           const p = players.find((x) => x.seat === i);
           return p ? p.name : `玩家 ${i + 1}`;
         });
-        // 对手走了（或还没来）：本局作废，回到等待态，别继续拿旧球位显示「轮到你了」
         if (players.length < 2) {
           match.phase = 'wait';
           match.winner = null;
@@ -247,49 +367,47 @@ export function createNetTransport(url, { onStatus } = {}) {
           view.opponentAim = null;
           view.canShoot = false;
           view.balls = [];
-          buffer = [];
           effects = [];
+          world = null;
+          settling = false;
         }
         break;
       }
 
       case 'start':
-        Object.assign(match, createMatch());
-        buffer = [];
-        effects = [];
+        roundNo = m.round || 1;
+        buildWorld(roundNo);
         view.phase = 'aim';
-        queue.push({ kind: 'toast', text: '开局！' });
         break;
 
-      case 'snap':
-        applySnap(m);
+      case 'shot':
+        // 对手出杆：本地用同一参数跑一遍，结果必然一致
+        if (m.seat !== seat) {
+          applyShotLocal(normalizeShot(m), false);
+          wasMyShot = false;
+        }
+        break;
+
+      case 'place':
+        if (world && Number.isFinite(m.x) && Number.isFinite(m.y)) {
+          placeCueWorld(world, m.x, m.y);
+          if (match.ballInHand === m.seat) match.ballInHand = null;
+        }
         break;
 
       case 'groups':
-        applyGroups(m);
-        break;
-
-      case 'evt':
-        if (m.type === 'hit') queue.push({ kind: 'sfx', name: 'ballHit', v: m.speed });
-        else if (m.type === 'cushion') queue.push({ kind: 'sfx', name: 'cushion', v: m.speed });
-        else if (m.type === 'pocket') {
-          queue.push({ kind: 'sfx', name: 'pocket', v: m.id });
-          const x = m.x / 1000, y = m.y / 1000;
-          effects.push({ id: m.id, x, y, t: 0, seed: fxSeed(m.id, x, y) });
-        }
-        else if (m.type === 'cue') queue.push({ kind: 'sfx', name: 'cue' });
-        else if (m.type === 'score') queue.push({ kind: 'sfx', name: 'score' });
-        else if (m.type === 'miscue') queue.push({ kind: 'sfx', name: 'miscue' });
-        break;
-
-      case 'oppAim':
-        if (m.seat !== seat) {
-          view.opponentAim = { angle: m.angle, power: m.power };
-        }
+        if (Array.isArray(m.group)) { match.group = m.group; match.open = !!m.open; }
         break;
 
       case 'turn':
+        match.turn = m.p;
+        match.phase = 'aim';
+        view.phase = 'aim';
         queue.push({ kind: 'sfx', name: 'turn' });
+        break;
+
+      case 'aim':
+        if (m.seat !== seat) view.opponentAim = { angle: m.angle, power: m.power };
         break;
 
       case 'toast':
@@ -300,7 +418,6 @@ export function createNetTransport(url, { onStatus } = {}) {
         if (pingAt) {
           const sample = performance.now() - pingAt;
           pingAt = 0;
-          // 指数平滑，忽略明显异常的样本
           if (sample > 0 && sample < 5000) rtt = rtt ? rtt * 0.7 + sample * 0.3 : sample;
         }
         break;
@@ -308,7 +425,7 @@ export function createNetTransport(url, { onStatus } = {}) {
       case 'over':
         match.phase = 'over';
         match.winner = m.winner;
-        // 胜负音效/彩带由 showOverlay 统一触发（可按 mySeat 区分赢/输），此处不推
+        view.phase = 'over';
         break;
 
       case 'peer':
@@ -318,72 +435,12 @@ export function createNetTransport(url, { onStatus } = {}) {
       case 'err':
         error = m.msg || m.code;
         if (m.code === 'ROOM_FULL') {
-          fatal = true;   // 房间满：停止自动重连（否则满房→断开→1.5s 重连→满房 死循环）
+          fatal = true;
           onStatus && onStatus('full');
         }
         queue.push({ kind: 'toast', text: '错误：' + (m.msg || m.code) });
         break;
     }
-  }
-
-  function applySnap(m) {
-    const now = performance.now();
-    buffer.push({ ts: now, balls: m.balls, potted: m.potted || [] });
-    if (buffer.length > 24) buffer.shift();
-
-    match.phase = m.phase;
-    match.turn = m.turn;
-    match.group = m.group || [null, null];
-    match.open = m.open !== false;
-    match.winner = m.winner ?? null;
-    match.potted = m.potted ? m.potted.filter((id) => id !== 0) : match.potted;
-    match.ballInHand = m.ballInHand ?? null;
-    if (m.names) view.names = m.names;
-
-    view.phase = m.phase;
-    view.opponentAim = m.oppAim || null;
-  }
-
-  function applyGroups(m) {
-    if (Array.isArray(m.group)) {
-      match.group = m.group;
-      match.open = !!m.open;
-    }
-  }
-
-  /** 相邻两帧插值 */
-  function interpolate() {
-    if (!buffer.length) return [];
-    const delay = Math.min(INTERP_DELAY_MAX, Math.max(INTERP_DELAY, rtt * INTERP_HEADROOM));
-    const target = performance.now() - delay;
-
-    let a = null, b = null;
-    for (let i = 0; i < buffer.length; i++) {
-      if (buffer[i].ts <= target) a = buffer[i];
-      else { b = buffer[i]; break; }
-    }
-    if (!a) a = buffer[0];
-    if (!b) b = a;
-
-    const span = b.ts - a.ts || 1;
-    const k = Math.max(0, Math.min(1, (target - a.ts) / span));
-
-    return a.balls.map((ab) => {
-      const bb = b.balls.find((x) => x.i === ab.i) || ab;
-      const ax = ab.x / 1000, ay = ab.y / 1000;
-      const bx = bb.x / 1000, by = bb.y / 1000;
-      // 大跳变（换局/复位）直接吸附，别插值出一条横穿台面的线
-      const jump = Math.hypot(bx - ax, by - ay) > 0.15;
-      const kk = jump ? 1 : k;
-      return {
-        id: ab.i,
-        x: ax + (bx - ax) * kk,
-        y: ay + (by - ay) * kk,
-        potted: !!ab.p,
-        rz: (ab.r || 0) + ((bb.r || 0) - (ab.r || 0)) * kk,
-        color: undefined,
-      };
-    });
   }
 
   connect();
@@ -392,14 +449,15 @@ export function createNetTransport(url, { onStatus } = {}) {
     mode: 'net',
     get names() { return view.names; },
     get view() {
+      physicsTick();
       const dt = 1 / 60;
       for (const e of effects) e.t = Math.min(1, e.t + dt / FX_LIFE);
       effects = effects.filter((e) => e.t < 1);
-      const balls = interpolate();
-      view.balls = balls;
+
+      view.balls = world ? world.balls : [];
       view.match = match;
       view.mySeat = seat;
-      view.canShoot = seat >= 0 && match.phase === 'aim' && match.turn === seat;
+      view.canShoot = seat >= 0 && match.phase === 'aim' && match.turn === seat && !settling;
       view.ballInHand = match.ballInHand;
       view.canPlace = seat >= 0 && match.phase === 'aim' && match.ballInHand === seat;
       view.phase = match.phase;
@@ -410,19 +468,28 @@ export function createNetTransport(url, { onStatus } = {}) {
       view.latency = Math.round(rtt);
       return view;
     },
-    /** 自由球摆放：交给服务端权威落位 */
     placeCue(pos) {
       if (!(seat >= 0 && match.phase === 'aim' && match.ballInHand === seat)) return false;
-      send({ t: 'place', x: pos.x, y: pos.y });
-      return true;
+      // 本地先落位（0 延迟），服务端确认后广播给对手
+      if (world && placeCueWorld(world, pos.x, pos.y)) {
+        match.ballInHand = null;
+        send({ t: 'place', x: pos.x, y: pos.y });
+        queue.push({ kind: 'toast', text: '母球已摆好，出杆' });
+        return true;
+      }
+      return false;
     },
-    /** 本地几何预判（服务端仍会二次校验） */
     canPlaceCue(pos) {
-      return canPlaceCue({ balls: view.balls || [] }, pos.x, pos.y);
+      if (!world) return false;
+      return canPlaceCue(world, pos.x, pos.y);
     },
     shoot(shot) {
-      if (!(seat >= 0 && match.phase === 'aim' && match.turn === seat)) return false;
-      send({ t: 'shot', angle: shot.angle, power: shot.power, spin: shot.spin });
+      if (!(seat >= 0 && match.phase === 'aim' && match.turn === seat && !settling)) return false;
+      const s = normalizeShot(shot);
+      // 本地立刻开打，同时把参数发给对手
+      if (!applyShotLocal(s, true)) return false;
+      wasMyShot = true;
+      send({ t: 'shot', ...s });
       return true;
     },
     aim(shot) {
@@ -442,23 +509,23 @@ export function createNetTransport(url, { onStatus } = {}) {
 }
 
 /** 探测服务端是否可用；不可用就降级本地 */
+/** 探测服务端是否可用；不可用就降级本地 */
 export async function probeServer(timeout = 1200) {
   if (location.protocol === 'file:') return false;
   return new Promise((resolve) => {
     let done = false;
-    let ws;
-    const finish = (ok) => {
-      if (done) return;
-      done = true;
-      try { ws && ws.close(); } catch { }
-      resolve(ok);
-    };
-    const timer = setTimeout(() => finish(false), timeout);
     try {
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}`);
-      ws.onopen = () => { clearTimeout(timer); finish(true); };
-      ws.onerror = () => { clearTimeout(timer); finish(false); };
-    } catch { clearTimeout(timer); finish(false); }
+      const ctl = new AbortController();
+      const timer = setTimeout(() => { ctl.abort(); finish(false); }, timeout);
+      function finish(ok) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(ok);
+      }
+      fetch('/health', { signal: ctl.signal, cache: 'no-store' })
+        .then((r) => finish(r.ok))
+        .catch(() => finish(false));
+    } catch { resolve(false); }
   });
 }

@@ -68,6 +68,8 @@ export function createWorld(cfg = {}) {
     pocketed: [],
     events: [],
     time: 0,
+    // 确定性随机数发生器：滑杆的抖动必须两端一致，否则联机会分叉。
+    rng: 1,
     seq: 0,
     cfg: Object.assign({}, CFG, cfg),
   };
@@ -206,13 +208,14 @@ export function applyShot(world, shot) {
 
   const miscue = rr > world.cfg.miscueR;
   if (miscue) {
-    // 滑杆：极少量能量 + 方向随机偏移，不出正常球
-    const off = (Math.random() - 0.5) * 0.25;
-    a = (Math.random() - 0.5) * 1.4;
-    b = (Math.random() - 0.5) * 1.4;
+    // 滑杆：极少量能量 + 方向随机偏移，不出正常球。
+    // 抖动必须两端一致（联机时各自算同一杆），因此用 world 上的确定性 RNG，
+    // 绝不能用 Math.random —— 否则两台机器会算出不同的球路。
+    const off = (nextRandom(world) - 0.5) * 0.25;
+    a = (nextRandom(world) - 0.5) * 1.4;
+    b = (nextRandom(world) - 0.5) * 1.4;
     shot = { angle: angle + off, power: Math.min(0.12, shot.power * 0.1) };
   }
-
   const power = clamp(shot.power, 0, 1);
   const vc = 0.30 + 4.70 * power;                       // 杆速 m/s
   const r = Math.min(rr, 1) * R;
@@ -230,6 +233,19 @@ export function applyShot(world, shot) {
 
   world.seq++;
   return { ok: true, miscue, v0 };
+}
+
+/**
+ * 确定性 PRNG（xorshift32）。种子存在 world 上，随世界一起重建。
+ * 联机两端从同一 seed 出发、按同一顺序消费，结果必然相同。
+ */
+function nextRandom(world) {
+  let s = (world.rng | 0) || 0x9e3779b9;
+  s ^= s << 13; s |= 0;
+  s ^= s >>> 17;
+  s ^= s << 5; s |= 0;
+  world.rng = s >>> 0;
+  return ((s >>> 0) % 1000000) / 1000000;
 }
 
 /* ------------------------------------------------------------------ */
