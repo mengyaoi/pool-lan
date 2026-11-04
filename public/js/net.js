@@ -78,6 +78,10 @@ export function createLocalTransport({ names = ['玩家 1', '玩家 2'] } = {}) 
     const anyHit = firstHit !== null;
     const pottedAll = pottedNow.filter((id) => id !== 0);
 
+    // resolveShot 会从「当前 turn」推进到下一手。非出杆方的 turn 可能已经被
+    // 服务端的 turn 广播改成了下一手，此时再推进一次就会跳过一个人，
+    // 表现为双方都出不了杆。所以先记住推进前的值。
+    const priorTurn = match.turn;
     const r = resolveShot(match, { newPotted, cuePotted, firstHit, anyHit, pottedAll });
     if (cuePotted) respotCue(world);
     if (r.respot && r.respot.length) {
@@ -248,11 +252,28 @@ export function createNetTransport(url, { onStatus } = {}) {
     const anyHit = firstHit !== null;
     const pottedAll = pottedNow.filter((id) => id !== 0);
 
+    // resolveShot 会从「当前 turn」推进到下一手。非出杆方的 turn 可能已经被
+    // 服务端的 turn 广播改成了下一手，此时再推进一次就会跳过一个人，
+    // 表现为双方都出不了杆。所以先记住推进前的值。
+    const priorTurn = match.turn;
     const r = resolveShot(match, { newPotted, cuePotted, firstHit, anyHit, pottedAll });
     if (cuePotted) respotCue(world);
     if (r.respot && r.respot.length) for (const id of r.respot) respotBall(world, id);
     match.potted = pottedAll.slice();
     settling = false;
+
+    // 服务端才是轮次/花色的权威。非出杆方如果比服务端广播更晚结算完，
+    // 自己算出的 turn 会把刚收到的权威值再翻一次（表现为双方都出不了杆）。
+    // 因此：只要服务端已经裁定过，就以服务端的值为准。
+    if (!wasMyShot) {
+      // 非出杆方：轮次以服务端为准；还没收到就用结算前那个值（即出杆方留在此手）。
+      match.turn = serverTurn !== null ? serverTurn : priorTurn;
+      if (!r.over) match.phase = 'aim';
+    }
+    if (serverGroups) {
+      match.group = serverGroups.group;
+      match.open = serverGroups.open;
+    }
 
     if (!r.over && newPotted.length) queue.push({ kind: 'sfx', name: 'score' });
     else if (!r.over) queue.push({ kind: 'sfx', name: 'turn' });
@@ -302,6 +323,8 @@ export function createNetTransport(url, { onStatus } = {}) {
 
   let waitWarnTimer = null;
   let wasMyShot = false;
+  let serverTurn = null;   // 服务端最近裁定的轮次（权威）
+  let serverGroups = null; // 服务端最近裁定的花色/开放表
 
   /* ---------- 连接 ---------- */
 
@@ -420,11 +443,16 @@ export function createNetTransport(url, { onStatus } = {}) {
         break;
 
       case 'groups':
-        if (Array.isArray(m.group)) { match.group = m.group; match.open = !!m.open; }
+        if (Array.isArray(m.group)) {
+          match.group = m.group;
+          match.open = !!m.open;
+          serverGroups = { group: m.group, open: !!m.open };
+        }
         break;
 
       case 'turn':
         match.turn = m.p;
+        serverTurn = m.p;
         match.phase = 'aim';
         view.phase = 'aim';
         queue.push({ kind: 'sfx', name: 'turn' });

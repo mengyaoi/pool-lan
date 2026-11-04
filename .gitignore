@@ -9,3 +9,6 @@ ui-preview.png
 # Dependencies
 node_modules/
 .vercel/
+
+# Cloudflare local state
+.wrangler/
