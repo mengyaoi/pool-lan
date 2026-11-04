@@ -820,7 +820,11 @@ export function createRenderer(canvas) {
 
   /* ---------------- 对外 ---------------- */
   function resize() {
-    const rect = canvas.getBoundingClientRect();
+    // 界面被 CSS 旋转 90° 时，外接矩形的宽高是反的，用元素自身尺寸才准
+    const rotated = document.body.classList.contains('fake-landscape');
+    const rect = rotated
+      ? { width: canvas.offsetWidth, height: canvas.offsetHeight }
+      : canvas.getBoundingClientRect();
     dpr = Math.min(2.5, window.devicePixelRatio || 1);
     cssW = Math.max(320, rect.width);
     cssH = Math.max(200, rect.height);

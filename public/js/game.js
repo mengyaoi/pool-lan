@@ -20,6 +20,22 @@ const canvas = $('#table');
 const renderer = createRenderer(canvas);
 const audio = createAudio();
 
+/* 界面被 CSS 转过 90°（fake-landscape）时，getBoundingClientRect 得到的是外接矩形，
+   不能直接拿来算触摸点。这里统一换算成元素自身坐标。 */
+function elementPoint(el, clientX, clientY) {
+  if (!document.body.classList.contains('fake-landscape')) {
+    const r = el.getBoundingClientRect();
+    return { x: clientX - r.left, y: clientY - r.top, w: r.width, h: r.height };
+  }
+  // 局部坐标 (x,y) 旋转后落在屏幕 (W - y, x)
+  let x = clientY, y = window.innerWidth - clientX;
+  for (let n = el; n && n !== document.body; n = n.offsetParent) {
+    x -= n.offsetLeft;
+    y -= n.offsetTop;
+  }
+  return { x, y, w: el.offsetWidth, h: el.offsetHeight };
+}
+
 const el = {
   status: $('#status'), room: $('#room'),
   name0: $('#name0'), name1: $('#name1'),
@@ -52,9 +68,9 @@ function initSpinPad() {
   let active = false;
 
   function pick(clientX, clientY) {
-    const r = pad.getBoundingClientRect();
-    let dx = ((clientX - r.left) / r.width) * S - M;
-    let dy = ((clientY - r.top) / r.height) * S - M;
+    const p = elementPoint(pad, clientX, clientY);
+    let dx = (p.x / p.w) * S - M;
+    let dy = (p.y / p.h) * S - M;
     const d = Math.hypot(dx, dy);
     if (d > RAD * 0.74) {                     // 超过安全区就贴边（滑杆风险区）
       dx = (dx / d) * RAD * 0.74;
@@ -128,10 +144,7 @@ function initSpinPad() {
 /* 输入                                                               */
 /* ------------------------------------------------------------------ */
 function bindInput() {
-  const pos = (e) => {
-    const r = canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
-  };
+  const pos = (e) => elementPoint(canvas, e.clientX, e.clientY);
 
   canvas.addEventListener('pointerdown', (e) => {
     audio.unlock();
@@ -209,6 +222,7 @@ function bindInput() {
   $('#btnRotateGo').addEventListener('click', () => { enterLandscape(); });
   $('#btnRotateSkip').addEventListener('click', () => { dismissRotateGuide(); resize(); });
   $('#btnLandscape').addEventListener('click', () => {
+    if (fakeLandscape) { setFakeLandscape(false); syncRotateGuide(); return; }
     if (portraitMQ.matches) {
       rotateDismissed = false;
       syncRotateGuide();
@@ -271,11 +285,23 @@ function showToast(text) {
 /* ------------------------------------------------------------------ */
 const portraitMQ = window.matchMedia('(max-aspect-ratio: 1/1)');
 let rotateDismissed = false;
+let fakeLandscape = false;
+
+/** 系统不让锁方向时，把界面自己转 90°（CSS transform），保证一定能横过来 */
+function setFakeLandscape(on) {
+  fakeLandscape = on;
+  document.body.classList.toggle('fake-landscape', on);
+  const btn = $('#btnLandscape');
+  if (btn) btn.textContent = on ? '退出横屏' : '横屏';
+  [0, 60, 200, 420].forEach((ms) => setTimeout(resize, ms));
+}
 
 function syncRotateGuide() {
   const box = $('#rotate');
   if (!box) return;
   const portrait = portraitMQ.matches;
+  // 应用内横屏时，屏幕物理上仍是竖屏，但界面已经是横屏布局，不能再弹引导
+  if (fakeLandscape) { box.classList.add('hidden'); return; }
   // 转回横屏时清掉“先玩着”的状态，下次竖屏还会提醒
   if (!portrait) rotateDismissed = false;
   box.classList.toggle('hidden', !portrait || rotateDismissed);
@@ -304,6 +330,13 @@ async function enterLandscape() {
       locked = true;
     }
   } catch { /* iOS Safari 等不支持锁定 */ }
+
+  // 关键兜底：没锁成功说明系统不给网页转屏权限，那就自己转
+  if (!locked && portraitMQ.matches) {
+    setFakeLandscape(true);
+    if (tip) tip.textContent = '已把界面转成横屏；想换回来点下面的「退出横屏」。';
+    return;
+  }
 
   if (tip) {
     tip.textContent = locked
@@ -535,6 +568,8 @@ async function boot() {
 
   syncRotateGuide();
   portraitMQ.addEventListener('change', () => {
+    // 用户真的把手机横过来了，就撤掉软件旋转，回到原生横屏布局
+    if (fakeLandscape && !portraitMQ.matches) setFakeLandscape(false);
     syncRotateGuide();
     [0, 150, 400].forEach((ms) => setTimeout(resize, ms));
   });

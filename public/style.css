@@ -614,3 +614,70 @@ button.off { opacity: .45; }
   .rotate-card .primary { padding: 9px 12px; font-size: 12px; }
   .rotate-card .linklike { margin-top: 0; font-size: 10.5px; }
 }
+
+/* ---------------- 应用内横屏兜底 ---------------- */
+/* 系统不允许网页锁定方向时（iOS Safari、部分安卓浏览器），把整个界面顺时针转 90°。
+   这里同时覆盖竖屏媒体查询，让内部布局按 844×390 的横屏尺寸工作。 */
+body.fake-landscape { background: var(--bg0); }
+body.fake-landscape #app {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vh; width: 100dvh;
+  height: 100vw; height: 100dvw;
+  transform: translateX(100vw) rotate(90deg);
+  transform: translateX(100dvw) rotate(90deg);
+  transform-origin: top left;
+}
+body.fake-landscape #app::after { content: none; }
+body.fake-landscape #rotate { display: none; }
+body.fake-landscape #hud {
+  padding:
+    calc(4px + env(safe-area-inset-top, 0px))
+    calc(10px + env(safe-area-inset-right, 0px))
+    2px
+    calc(10px + env(safe-area-inset-left, 0px));
+  gap: 8px;
+}
+body.fake-landscape .pcard {
+  flex: 0 1 auto;
+  min-width: 170px;
+  padding: 5px 9px;
+  gap: 7px;
+  border-radius: 14px;
+}
+body.fake-landscape .avatar { width: 26px; height: 26px; flex-basis: 26px; font-size: 11px; }
+body.fake-landscape .pname { font-size: 11px; max-width: 120px; }
+body.fake-landscape .pdots { max-width: 168px; gap: 3px; }
+body.fake-landscape .pdots i { width: 12px; height: 12px; font-size: 7.5px; }
+body.fake-landscape #center { display: flex; }
+body.fake-landscape #status { font-size: 11px; padding: 4px 12px; }
+body.fake-landscape #room { font-size: 9px; }
+body.fake-landscape #stage {
+  flex: 1 1 auto;
+  align-self: auto;
+  aspect-ratio: auto;
+  margin: 0 calc(8px + env(safe-area-inset-right, 0px)) 0 calc(8px + env(safe-area-inset-left, 0px));
+  border-radius: 18px;
+}
+body.fake-landscape #dock {
+  flex-wrap: nowrap;
+  margin:
+    4px
+    calc(8px + env(safe-area-inset-right, 0px))
+    calc(4px + env(safe-area-inset-bottom, 0px))
+    calc(8px + env(safe-area-inset-left, 0px));
+  padding: 5px 10px;
+  gap: 12px;
+  border-radius: 16px;
+}
+body.fake-landscape #spin-canvas { width: 46px; height: 46px; flex-basis: 46px; }
+body.fake-landscape #spinbox { padding: 2px 8px 2px 2px; gap: 8px; }
+body.fake-landscape .spin-title { display: none; }
+body.fake-landscape .spin-hint { font-size: 10px; padding: 1px 7px; }
+body.fake-landscape .plabel { font-size: 8.5px; letter-spacing: 2px; }
+body.fake-landscape .power-label { font-size: 11.5px; }
+body.fake-landscape .power-track { height: 10px; }
+body.fake-landscape .hint { display: none; }
+body.fake-landscape .btns { display: flex; flex: 0 0 auto; gap: 6px; }
+body.fake-landscape #btnLocal { display: inline-block; }
+body.fake-landscape button { padding: 6px 10px; font-size: 10.5px; border-radius: 9px; }
