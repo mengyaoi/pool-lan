@@ -43,7 +43,7 @@ const el = {
   dots0: $('#dots0'), dots1: $('#dots1'),
   card0: $('#card0'), card1: $('#card1'),
   powerFill: $('#powerFill'), powerLabel: $('#powerLabel'),
-  powerTrack: $('#powerTrack'), btnShoot: $('#btnShoot'),
+  powerTrack: $('#powerTrack'),
   toast: $('#toast'), hint: $('#hint'),
   overlay: $('#overlay'), ovTitle: $('#ovTitle'), ovScore: $('#ovScore'), ovDesc: $('#ovDesc'),
   spinHint: $('#spinHint'),
@@ -67,6 +67,9 @@ let dragging = false;
 let dragStart = { x: 0, y: 0 };
 let dragMode = null;                  // 'aim' = 拖动改角度，'power' = 后拉蓄力
 let aimLockedBallId = null;           // 最近一次点中的目标球（只用于提示）
+let dragStartAngle = 0;               // 按下瞬间的球杆角度（相对旋转用）
+let dragCueVec = { x: 0, y: 0 };      // 按下瞬间「手指相对母球」的向量
+let dragTapWorld = null;              // 按下点（世界坐标），仅在「轻点」时用来瞄准
 let placing = false;                  // 自由球：正在拖动母球摆位
 let placePos = { x: 0, y: 0 };
 let toastTimer = null;
@@ -157,11 +160,12 @@ function initSpinPad() {
 /* ------------------------------------------------------------------ */
 /* 输入                                                               */
 /* ------------------------------------------------------------------ */
-/** 力度滑杆：点击/拖动直接设力量，不依赖在台面上做手势 */
+/** 力度滑杆：点一下就按这个力度出杆；按住拖动可先看力度，松手出杆 */
 function initPowerSlider() {
   const track = el.powerTrack;
   if (!track) return;
   let active = false;
+  let startPower = 0;
 
   // 用元素自身坐标算比例：界面被 CSS 转过 90° 时，外接矩形的宽高是反的
   const setFromClientX = (clientX, clientY) => {
@@ -175,23 +179,33 @@ function initPowerSlider() {
   track.addEventListener('pointerdown', (e) => {
     if (!view || !view.canShoot || view.phase !== 'aim') return;
     active = true;
+    startPower = aim.power;
     audio.unlock();
     try { track.setPointerCapture(e.pointerId); } catch { }
     setFromClientX(e.clientX, e.clientY);
-    e.preventDefault();
   });
   track.addEventListener('pointermove', (e) => {
     if (!active) return;
     setFromClientX(e.clientX, e.clientY);
-    e.preventDefault();
   });
-  const stop = () => { active = false; };
-  track.addEventListener('pointerup', stop);
-  track.addEventListener('pointercancel', stop);
+  track.addEventListener('pointercancel', () => {
+    if (!active) return;
+    active = false;
+    aim.power = startPower;
+    syncPowerHud();
+  });
+  // 只在这里出杆一次：手指抬起时可能已经离开细条本身，所以监听 window（捕获阶段）
+  window.addEventListener('pointerup', () => {
+    if (!active) return;
+    active = false;
+    // 点一下就出杆：手指落点已经决定力量，抬起立即击球
+    fireShot();
+  }, true);
 
-  // 键盘也能微调
+  // 键盘：方向键调力量，回车出杆
   track.addEventListener('keydown', (e) => {
     if (!view || !view.canShoot) return;
+    if (e.key === 'Enter' || e.key === ' ') { fireShot(); e.preventDefault(); return; }
     if (e.key === 'ArrowRight' || e.key === 'ArrowUp') aim.power = Math.min(1, aim.power + 0.05);
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') aim.power = Math.max(0, aim.power - 0.05);
     else return;
@@ -208,7 +222,7 @@ function syncPowerHud() {
   if (el.powerTrack) el.powerTrack.setAttribute('aria-valuenow', String(pct));
 }
 
-/** 「出杆」按钮：用当前力量和角度真正击球 */
+/** 用当前力量和角度击球（由力量条触发） */
 function fireShot() {
   if (!view || !transport) return;
   if (view.phase !== 'aim') return;
@@ -245,22 +259,16 @@ function bindInput() {
     const cue = view.balls.find((b) => b.id === 0 && !b.potted);
     if (!cue) return;
     const w = renderer.screenToWorld(p.x, p.y);
-
-    // 触摸屏没有 hover：按下即瞄准。点中哪颗球就对哪颗球，点空处就对那个点。
-    // 命中半径放大到 2.2 个球径，手指略偏也能选中。
-    const target = nearestBall(view.balls, w, R * 2.2);
-    const tx = target ? target.x : w.x;
-    const ty = target ? target.y : w.y;
-    const dx = tx - cue.x, dy = ty - cue.y;
-    if (Math.hypot(dx, dy) > R * 0.6) {
-      aim.angle = Math.atan2(dy, dx);
-      aimLockedBallId = target ? target.id : null;
-    }
-
+    dragTapWorld = w;                // 先记下按下的位置，抬起时若是「轻点」才用它瞄准
+    // 关键：按下时绝不动角度。否则你刚瞄好、准备后拉出杆的那一下，杆会突然跳掉。
+    // 角度只由「横滑」或「轻点球」改变，后拉只负责蓄力。
+    const cs = renderer.worldToScreen(cue.x, cue.y);
     dragging = true;
-    dragMode = 'pending';            // 先看手指往哪走：横向 = 调方向，后拉 = 蓄力
+    dragMode = 'pending';            // 先看手指往哪走：横向 = 转杆，后拉 = 蓄力
     dragStart = p;
-    // 注意：这里不清空力量。手机上常先设力量再点球微调方向，清掉会前功尽弃
+    dragStartAngle = aim.angle;
+    dragCueVec = { x: p.x - cs.x, y: p.y - cs.y };
+    // 注意：这里不清空力量，也不改角度
     try { canvas.setPointerCapture(e.pointerId); } catch { }
   });
 
@@ -290,13 +298,17 @@ function bindInput() {
       }
 
       if (dragMode === 'aim') {
-        // 按住滑动微调方向：把杆指向手指，同时保持不蓄力
+        // 相对旋转：按下的角度 + 手指绕母球扫过的角度差。
+        // 不直接用「指向手指」，所以按下那一下不会跳杆。
         const cs = renderer.worldToScreen(cue.x, cue.y);
-        const wx = p.x - cs.x, wy = cs.y - p.y;
-        if (Math.hypot(wx, wy) > R * 0.6) {
-          aim.angle = Math.atan2(wy, wx);
-          aimLockedBallId = null;
-        }
+        const now = { x: p.x - cs.x, y: p.y - cs.y };
+        const a0 = Math.atan2(-dragCueVec.y, dragCueVec.x);   // 屏幕 y 向下，取反成数学角
+        const a1 = Math.atan2(-now.y, now.x);
+        let delta = a1 - a0;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        aim.angle = dragStartAngle + delta;
+        aimLockedBallId = null;
         aim.power = 0;
       } else if (dragMode === 'power') {
         // 后拉蓄力：只认「瞄准反方向」的位移，往前推不会误出杆
@@ -320,13 +332,29 @@ function bindInput() {
     }
     if (!dragging) return;
     dragging = false;
-    const pulled = dragMode === 'power';
+    const mode = dragMode;
+    const pulled = mode === 'power';
     dragMode = null;
     // 只有真的向后拉过才算出杆；单击/滑动只是瞄准，不能把已设好的力量误打出去
     if (pulled && aim.power > 0.05 && view && view.canShoot && view.phase === 'aim') {
       transport.shoot({ angle: aim.angle, power: aim.power, spin: { ...aim.spin } });
       aim.power = 0;
+      aimLockedBallId = null;
+    } else if (mode === 'pending' && dragTapWorld && view.canShoot && view.phase === 'aim') {
+      // 轻点：不改角度，纯瞄准（点了哪颗球就对准哪颗球）
+      const cue = view.balls.find((b) => b.id === 0 && !b.potted);
+      if (cue) {
+        const target = nearestBall(view.balls, dragTapWorld, R * 2.2);
+        const tx = target ? target.x : dragTapWorld.x;
+        const ty = target ? target.y : dragTapWorld.y;
+        const dx = tx - cue.x, dy = ty - cue.y;
+        if (Math.hypot(dx, dy) > R * 0.6) {
+          aim.angle = Math.atan2(dy, dx);
+          aimLockedBallId = target ? target.id : null;
+        }
+      }
     }
+    dragTapWorld = null;
   };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
@@ -335,7 +363,6 @@ function bindInput() {
 
   $('#btnRematch').addEventListener('click', () => transport && transport.rematch());
   $('#ovBtn').addEventListener('click', () => { transport && transport.rematch(); });
-  $('#btnShoot').addEventListener('click', () => fireShot());
 
   $('#btnRotateGo').addEventListener('click', () => { enterLandscape(); });
   $('#btnRotateSkip').addEventListener('click', () => { dismissRotateGuide(); resize(); });
@@ -525,11 +552,9 @@ function updateHud(v) {
   el.powerFill.style.width = pct + '%';
   el.powerLabel.textContent = pct + '%';
   if (el.powerTrack) el.powerTrack.setAttribute('aria-valuenow', String(pct));
-  // 出杆按钮：轮到自己就能按（没设力量时按默认 50% 出杆）
-  if (el.btnShoot) {
-    const canShootNow = v.phase === 'aim' && v.canShoot;
-    el.btnShoot.classList.toggle('off', !canShootNow);
-    el.btnShoot.disabled = !canShootNow;
+  // 力量条只有在轮到自己时才可操作
+  if (el.powerTrack) {
+    el.powerTrack.classList.toggle('locked', !(v.phase === 'aim' && v.canShoot));
   }
 
   if (v.phase === 'over') {

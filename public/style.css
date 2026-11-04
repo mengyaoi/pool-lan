@@ -315,7 +315,8 @@ html, body {
   top: 50%; height: 34px; margin-top: -17px;
 }
 .power-track:focus-visible { outline: 2px solid rgba(53,224,140,.6); outline-offset: 3px; }
-#btnShoot.disabled, #btnShoot:disabled { opacity: .4; cursor: default; box-shadow: none; filter: grayscale(.35); }
+.power-track.locked { opacity: .45; cursor: default; }
+.power-track.locked::before { pointer-events: none; }
 /* 10 段刻度 */
 .power-track::after {
   content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
