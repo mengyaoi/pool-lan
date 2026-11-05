@@ -543,6 +543,12 @@ button.off { opacity: .45; }
 /* ---------------- 响应式 ---------------- */
 /* 竖屏（手机）：台面按宽度铺满，余下高度也交给台面，避免中间一大片空档 */
 @media (max-aspect-ratio: 1/1) {
+  /* 竖屏也要看得到「轮到你 / 房间号」：HUD 折成两行，状态条单独占一行 */
+  #hud { flex-wrap: wrap; align-items: stretch; }
+  #center { display: flex; order: 3; flex: 1 0 100%; gap: 2px; padding-top: 1px; }
+  #status { font-size: 11px; padding: 4px 12px; }
+  .roombar { padding: 0 6px; }
+  .roombar #room { font-size: 9.5px; }
   #stage {
     flex: 1 1 auto;
     align-self: stretch;
@@ -555,6 +561,8 @@ button.off { opacity: .45; }
   #aimNudge button { width: 40px; height: 32px; font-size: 18px; }
   /* 竖屏窄卡放不下徽章 + 任务两行；任务行已写清球组，徽章收起避免挤字 */
   .pscore { display: none; }
+  /* 后面 max-width:760px 的规则会把 #center 隐藏，这里用更高优先级放回来 */
+  #hud #center { display: flex; }
 }
 
 /* 竖屏引导期间收起球桌，避免露出被压扁的台面 */
