@@ -316,19 +316,16 @@ html, body {
 
 /* 角度微调：贴台面右下角，拇指够得到，又不挡球桌主体 */
 #aimNudge {
-  position: absolute; right: 6px; bottom: 6px; z-index: 7;
-  display: flex; gap: 4px;
+  display: flex; gap: 3px; margin-left: 2px;
 }
 #aimNudge button {
-  width: 34px; height: 30px; padding: 0;
+  width: 24px; height: 20px; padding: 0;
   display: grid; place-items: center;
-  font-size: 17px; line-height: 1; font-weight: 700;
+  font-size: 14px; line-height: 1; font-weight: 700;
   color: var(--ink-dim);
   background: rgba(6, 18, 12, .38);
   border: 1px solid rgba(255,255,255,.16);
-  border-radius: 9px;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  border-radius: 7px;
   touch-action: none;
 }
 #aimNudge button:active { background: rgba(53,224,140,.2); color: var(--ink); }
@@ -386,7 +383,8 @@ html, body {
 #power { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .power-head { display: flex; align-items: baseline; gap: 8px; }
 .plabel { font-size: 9.5px; font-weight: 700; letter-spacing: 3px; color: var(--ink-mute); }
-.power-label {
+  .power-head { align-items: center; }
+  .power-label {
   margin-left: auto;
   font-size: 13px; font-weight: 800; color: var(--emerald);
   font-variant-numeric: tabular-nums;
@@ -556,9 +554,8 @@ button.off { opacity: .45; }
     aspect-ratio: auto;
     margin: 8px 8px 10px;
   }
-  /* 竖屏球桌已旋转铺满，微调按钮要避开底角袋口 */
-  #aimNudge { bottom: 10px; right: auto; left: 50%; transform: translateX(-50%); }
-  #aimNudge button { width: 40px; height: 32px; font-size: 18px; }
+  /* 竖屏微调按钮放在力量条标题行，不压在台面袋口上 */
+  #aimNudge button { width: 30px; height: 24px; font-size: 16px; }
   /* 竖屏窄卡放不下徽章 + 任务两行；任务行已写清球组，徽章收起避免挤字 */
   .pscore { display: none; }
   /* 后面 max-width:760px 的规则会把 #center 隐藏，这里用更高优先级放回来 */
@@ -732,9 +729,10 @@ body.rotate-guide #stage { display: none; }
     gap: 8px;
     border-radius: 13px;
   }
-  /* 微调按钮必须落在画布内（底栏上方），否则会被底栏盖住 */
-  #aimNudge { bottom: 56px; right: 5px; }
-  #aimNudge button { width: 32px; height: 28px; font-size: 16px; }
+  #aimNudge button { width: 28px; height: 22px; font-size: 15px; }
+  /* 横屏底栏太窄，微调按钮改回悬浮在台面右下角，不挤力量条 */
+  #aimNudge { position: absolute; right: 8px; bottom: 56px; z-index: 7; margin: 0; }
+  #aimNudge button { width: 34px; height: 28px; font-size: 16px; }
   #spin-canvas { width: 38px; height: 38px; flex-basis: 38px; }
   #spinbox { padding: 1px 7px 1px 1px; gap: 6px; }
   .spin-title { display: none; }
@@ -862,8 +860,9 @@ body.fake-landscape #dock {
   gap: 8px;
   border-radius: 13px;
 }
-body.fake-landscape #aimNudge { bottom: 56px; right: 5px; }
-body.fake-landscape #aimNudge button { width: 32px; height: 28px; font-size: 16px; }
+body.fake-landscape #aimNudge button { width: 28px; height: 22px; font-size: 15px; }
+body.fake-landscape #aimNudge { position: absolute; right: 8px; bottom: 56px; z-index: 7; margin: 0; }
+body.fake-landscape #aimNudge button { width: 34px; height: 28px; font-size: 16px; }
 body.fake-landscape #spin-canvas { width: 46px; height: 46px; flex-basis: 46px; }
 body.fake-landscape #spinbox { padding: 2px 8px 2px 2px; gap: 8px; }
 body.fake-landscape .spin-title { display: none; }
