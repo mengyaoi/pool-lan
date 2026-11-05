@@ -51,6 +51,7 @@ const el = {
   overlay: $('#overlay'), ovTitle: $('#ovTitle'), ovScore: $('#ovScore'), ovDesc: $('#ovDesc'),
   spinHint: $('#spinHint'),
   roomBar: $('#roomBar'), btnRoom: $('#btnRoom'),
+  aimNudge: $('#aimNudge'), btnAimL: $('#btnAimL'), btnAimR: $('#btnAimR'),
   roomModal: $('#roomModal'), rmCode: $('#rmCode'), rmInvite: $('#rmInvite'),
   rmCreate: $('#rmCreate'), rmJoin: $('#rmJoin'), rmCopy: $('#rmCopy'),
   rmClose: $('#rmClose'), rmTip: $('#rmTip'),
@@ -238,6 +239,41 @@ function syncPowerHud() {
   if (el.powerFill) el.powerFill.style.width = pct + '%';
   if (el.powerLabel) el.powerLabel.textContent = pct + '%';
   if (el.powerTrack) el.powerTrack.setAttribute('aria-valuenow', String(pct));
+}
+
+/**
+ * 角度微调：轻点一下 0.35°，按住连续转。
+ * 薄球、贴库球靠手指直接点很难点准，这两个键是精细档。
+ */
+function bindAimNudge() {
+  const STEP = (0.35 * Math.PI) / 180;
+  const apply = (sign) => {
+    if (!view || !view.canShoot || view.phase !== 'aim' || view.canPlace) return;
+    aim.angle += sign * STEP;
+    while (aim.angle > Math.PI) aim.angle -= Math.PI * 2;
+    while (aim.angle < -Math.PI) aim.angle += Math.PI * 2;
+    aimLockedBallId = null;   // 手动微调后不再声称对准某颗球
+  };
+
+  for (const [btn, sign] of [[el.btnAimL, 1], [el.btnAimR, -1]]) {
+    if (!btn) continue;
+    let timer = 0, hold = 0;
+    const stop = () => { clearTimeout(hold); clearInterval(timer); timer = 0; };
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      audio.unlock();
+      apply(sign);
+      hold = setTimeout(() => {
+        timer = setInterval(() => apply(sign), 55);
+      }, 380);
+      try { btn.setPointerCapture(e.pointerId); } catch { }
+    });
+    btn.addEventListener('pointerup', stop);
+    btn.addEventListener('pointercancel', stop);
+    btn.addEventListener('pointerleave', stop);
+    btn.addEventListener('click', (e) => e.stopPropagation());
+  }
 }
 
 /** 用当前力量和角度击球（由力量条触发） */
@@ -934,6 +970,10 @@ function loop() {
   });
 
   updateHud(view);
+  if (el.aimNudge) {
+    el.aimNudge.classList.toggle('disabled',
+      !(view.canShoot && view.phase === 'aim' && !view.canPlace));
+  }
   if (spinPad) spinPad.draw();
 
   requestAnimationFrame(loop);
@@ -947,6 +987,7 @@ function resize() { renderer.resize(); }
 async function boot() {
   spinPad = initSpinPad();
   bindInput();
+  bindAimNudge();
   initPowerSlider();
   initRoomPanel();
 

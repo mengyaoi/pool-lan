@@ -314,6 +314,26 @@ html, body {
   cursor: crosshair;
 }
 
+/* 角度微调：贴台面右下角，拇指够得到，又不挡球桌主体 */
+#aimNudge {
+  position: absolute; right: 6px; bottom: 6px; z-index: 7;
+  display: flex; gap: 4px;
+}
+#aimNudge button {
+  width: 34px; height: 30px; padding: 0;
+  display: grid; place-items: center;
+  font-size: 17px; line-height: 1; font-weight: 700;
+  color: var(--ink-dim);
+  background: rgba(6, 18, 12, .38);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 9px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  touch-action: none;
+}
+#aimNudge button:active { background: rgba(53,224,140,.2); color: var(--ink); }
+#aimNudge.disabled { opacity: .32; pointer-events: none; }
+
 /* ---------------- 底部操作栏 ---------------- */
 #dock {
   flex: 0 0 auto;
@@ -692,6 +712,9 @@ button.off { opacity: .45; }
     gap: 8px;
     border-radius: 13px;
   }
+  /* 微调按钮必须落在画布内（底栏上方），否则会被底栏盖住 */
+  #aimNudge { bottom: 56px; right: 5px; }
+  #aimNudge button { width: 32px; height: 28px; font-size: 16px; }
   #spin-canvas { width: 38px; height: 38px; flex-basis: 38px; }
   #spinbox { padding: 1px 7px 1px 1px; gap: 6px; }
   .spin-title { display: none; }
@@ -819,6 +842,8 @@ body.fake-landscape #dock {
   gap: 8px;
   border-radius: 13px;
 }
+body.fake-landscape #aimNudge { bottom: 56px; right: 5px; }
+body.fake-landscape #aimNudge button { width: 32px; height: 28px; font-size: 16px; }
 body.fake-landscape #spin-canvas { width: 46px; height: 46px; flex-basis: 46px; }
 body.fake-landscape #spinbox { padding: 2px 8px 2px 2px; gap: 8px; }
 body.fake-landscape .spin-title { display: none; }
