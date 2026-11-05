@@ -6,7 +6,7 @@ import { createRenderer } from './render.js';
 import { createAudio } from './audio.js';
 import { createLocalTransport, createNetTransport } from './net.js';
 import { predictAim, R, BALL_COLORS } from './physics.js';
-import { GROUP_SOLID, GROUP_STRIPE, groupRemaining } from './rules.js';
+import { GROUP_SOLID, GROUP_STRIPE, groupRemaining, isLegalTarget } from './rules.js';
 
 // 文案直接写「光球 / 花球」，跟玩家口语一致，避免「实心/花色」看不懂
 const GROUP_SHORT = { [GROUP_SOLID]: '光球 1-7', [GROUP_STRIPE]: '花球 9-15', null: '未定', undefined: '未定' };
@@ -80,6 +80,7 @@ let dragStart = { x: 0, y: 0 };
 let dragMode = null;                  // 'pending' = 还没拖动（轻点瞄准），'power' = 拖动蓄力
 let aimLockedBallId = null;           // 最近一次点中的目标球（只用于提示）
 let dragTapWorld = null;              // 按下点（世界坐标），仅在「轻点」时用来瞄准
+let dragTapScreen = null;             // 按下点（屏幕坐标），点球按「手指看到的位置」吸附
 let dragPoint = { x: 0, y: 0 };       // 手指当前位置（画布局部坐标），放大镜跟着它走
 let magnifier = null;                 // 拖动蓄力时手指上方的放大镜
 let dragPointerType = 'touch';        // 鼠标不弹放大镜，只有手指才需要
@@ -278,13 +279,9 @@ function bindInput() {
     if (!cue) return;
     const w = renderer.screenToWorld(p.x, p.y);
     dragTapWorld = w;                // 先记下按下的位置，抬起时若是「轻点」才用它瞄准
-    // 按在目标球上就当场锁定这个方向；之后拖动只蓄力，角度绝不再变。
-    // 这就是「瞄准」和「出杆」彻底分开：不会出现刚要拉杆、角度突然跳掉。
-    const hitBall = nearestBall(view.balls, w, 32);
-    if (hitBall) {
-      aim.angle = Math.atan2(hitBall.y - cue.y, hitBall.x - cue.x);
-      aimLockedBallId = hitBall.id;
-    }
+    dragTapScreen = p;
+    // 按下时绝不改角度：只有「没怎么移动就抬起」才算轻点瞄准。
+    // 这样按住台面直接后拉时，哪怕手指落在别的球上，球杆也不会跳。
     dragging = true;
     dragPointerType = e.pointerType || 'touch';
     dragMode = 'pending';            // 还没拖起来 = 轻点瞄准；拖出去 = 蓄力
@@ -336,6 +333,7 @@ function bindInput() {
       dragging = false;
       dragMode = null;
       dragTapWorld = null;
+      dragTapScreen = null;
       magnifier = null;
       aim.power = 0;
       syncPowerHud();
@@ -363,19 +361,35 @@ function bindInput() {
       // 轻点：把球杆转向点到的那颗球（点在空处就指向那个方向）。
       const cue = view.balls.find((b) => b.id === 0 && !b.potted);
       if (cue) {
-        const target = nearestBall(view.balls, dragTapWorld, 30);
-        const tx = target ? target.x : dragTapWorld.x;
-        const ty = target ? target.y : dragTapWorld.y;
+        // 用按下时的屏幕坐标找球：手指看到哪就点哪，不受转屏/缩放影响。
+        const tapWorld = dragTapScreen
+          ? renderer.screenToWorld(dragTapScreen.x, dragTapScreen.y)
+          : dragTapWorld;
+        const target = nearestBall(view.balls, tapWorld, 32);
+        const tx = target ? target.x : tapWorld.x;
+        const ty = target ? target.y : tapWorld.y;
         const dx = tx - cue.x, dy = ty - cue.y;
         if (Math.hypot(dx, dy) > R * 0.6) {
           aim.angle = Math.atan2(dy, dx);
           aimLockedBallId = target ? target.id : null;
+          // 点到不该打的球时立刻说清楚，别等出杆后才吃犯规。
+          if (target && !isLegalTarget(view.match, target.id)) {
+            const me = view.match.turn === 1 ? 1 : 0;
+            const mine = view.match.group && view.match.group[me];
+            const need = view.match.open
+              ? '开放球台：先打任意彩球，别先碰黑8'
+              : (mine && groupRemaining(view.match.potted || [], mine).length
+                ? `该打${mine === GROUP_SOLID ? '光球' : '花球'}`
+                : '该打黑8');
+            showToast(`瞄准的是 ${target.id} 号，${need}`);
+          }
         }
       }
       aim.power = 0;
     }
     syncPowerHud();
     dragTapWorld = null;
+    dragTapScreen = null;
   };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
@@ -859,7 +873,11 @@ function loop() {
   const nowMs = performance.now();
   renderer.render({
     balls: drawBalls,
-    aim: { ...aim, targetId: aimLockedBallId },
+    aim: {
+      ...aim,
+      targetId: aimLockedBallId,
+      targetLegal: aimLockedBallId != null ? isLegalTarget(view.match, aimLockedBallId) : true,
+    },
     opponentAim: view.opponentAim,
     isMyTurn: view.canShoot,
     effects: collectEffects(nowMs),

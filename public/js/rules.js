@@ -66,6 +66,22 @@ export function groupRemaining(pottedAll, group) {
 }
 
 /**
+ * 当前这一杆，母球先碰 id 是否合法。
+ * 与 resolveShot 的判罚保持同一套逻辑，供瞄准提示复用。
+ * 开放表：1~7 / 9~15 都合法，先碰 8 犯规。
+ * 已定组：先碰对方球或 8 犯规；自己清台后则必须先碰 8。
+ */
+export function isLegalTarget(match, id) {
+  if (!match || id == null || id === 0) return false;
+  if (match.open) return id !== 8;
+  const me = match.turn === 1 ? 1 : 0;
+  const mine = match.group && match.group[me];
+  if (!mine) return id !== 8;
+  const cleared = groupCleared(match.potted || [], mine);
+  return cleared ? id === 8 : ballGroup(id) === mine;
+}
+
+/**
  * 结算一杆（会就地修改 match）。
  * @param {object} match
  * @param {{newPotted:number[], cuePotted:boolean, firstHit:number|null, anyHit:boolean, pottedAll:number[]}} res

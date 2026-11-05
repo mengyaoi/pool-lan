@@ -435,6 +435,11 @@ html, body {
   backdrop-filter: blur(10px);
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* 手机横屏把提示挪到台面中上部：顶部 HUD 是悬浮层，原位置会和状态文字重叠。 */
+@media (orientation: landscape) and (max-height: 500px) {
+  #toast { top: 58px; font-size: 12px; padding: 7px 16px; }
+}
+body.fake-landscape #toast { top: 58px; font-size: 12px; padding: 7px 16px; }
 
 /* ---------------- 按钮 ---------------- */
 button {

@@ -542,20 +542,22 @@ export function createRenderer(canvas) {
 
   /* ---------------- 对手瞄准射线 ---------------- */
   /** 被选中的目标球：给一个脉冲高亮环，点完能确认到底对准了哪颗 */
-  function drawTargetRing(balls, id, nowMs) {
+  function drawTargetRing(balls, id, nowMs, legal = true) {
     const b = balls && balls.find((x) => x.id === id && !x.potted);
     if (!b) return;
     const px = sx(b.x), py = sy(b.y);
     const t = ((nowMs != null ? nowMs : performance.now()) % 1200) / 1200;
     const grow = 1 + t * 0.45;
     const alpha = 0.85 * (1 - t);
+    // 合法目标 = 绿圈；点到对方球/黑8 = 灰红圈，出杆前就能看出来。
+    const ring = legal ? '53,224,140' : '239,120,92';
 
     ctx.save();
     ctx.beginPath();
     ctx.arc(px, py, R * scale * 1.35 * grow, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(255,225,120,${alpha})`;
+    ctx.strokeStyle = `rgba(${ring},${alpha})`;
     ctx.lineWidth = Math.max(2, scale * 0.005);
-    ctx.shadowColor = 'rgba(255,214,90,0.9)';
+    ctx.shadowColor = legal ? 'rgba(53,224,140,0.85)' : 'rgba(239,120,92,0.85)';
     ctx.shadowBlur = 10;
     ctx.stroke();
     ctx.restore();
@@ -563,7 +565,7 @@ export function createRenderer(canvas) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(px, py, R * scale * 1.22, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,225,120,0.85)';
+    ctx.strokeStyle = `rgba(${ring},0.85)`;
     ctx.lineWidth = Math.max(1.6, scale * 0.0036);
     ctx.stroke();
     ctx.restore();
@@ -892,7 +894,9 @@ export function createRenderer(canvas) {
       drawOpponentRay(cue, state.opponentAim.angle);
     }
     if (state.aim && state.aim.pred && cue) {
-      if (state.aim.targetId != null) drawTargetRing(state.balls, state.aim.targetId, state.now);
+      if (state.aim.targetId != null) {
+        drawTargetRing(state.balls, state.aim.targetId, state.now, state.aim.targetLegal !== false);
+      }
       drawAimLine(cue, state.aim.pred, 0.55);
       if (state.aim.showCue) drawCue(cue, state.aim.angle, state.aim.power);
     }
