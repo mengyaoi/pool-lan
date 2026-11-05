@@ -188,6 +188,8 @@ export function createNetTransport(url, { onStatus } = {}) {
   let lastSyncAt = 0;          // 空闲时的周期性权威对账
   let resolvedShots = 0;       // 本局已由服务器确认的最大 shots（挡住迟到旧包）
   let lastAimSent = 0;
+  let lastAimAngle = NaN;
+  let lastAimPower = NaN;
   let rtt = 0;
   let pingAt = 0;
   let pingTimer = null;
@@ -476,6 +478,8 @@ export function createNetTransport(url, { onStatus } = {}) {
       if (ws !== myWs) return;
       connected = true;
       error = null;
+      lastAimAngle = NaN;
+      lastAimPower = NaN;
       onStatus && onStatus('connected');
       const savedName = localStorage.getItem('pool_name') || '';
       send({ t: 'hello', name: savedName, room: wantRoom, token });
@@ -562,6 +566,7 @@ export function createNetTransport(url, { onStatus } = {}) {
 
       case 'start':
         roundNo = m.round || 1;
+        view.opponentAim = null;
         buildWorld(roundNo);
         view.phase = 'aim';
         break;
@@ -618,6 +623,7 @@ export function createNetTransport(url, { onStatus } = {}) {
         // 对手端本地物理可能还在跑：先别改 turn，否则它会按错误出杆人结算。
         // 真正的落状态统一走 result（服务端在停球后才发）。
         if (!settling) {
+          view.opponentAim = null;
           match.turn = m.p;
           match.phase = 'aim';
           view.phase = 'aim';
@@ -759,9 +765,15 @@ export function createNetTransport(url, { onStatus } = {}) {
     },
     aim(shot) {
       const now = performance.now();
-      if (now - lastAimSent < 100) return;
+      // 对手看到球杆转向的顺滑度取决于这个间隔：100ms 只有 10Hz，明显一顿一顿。
+      // 40ms ≈ 25Hz；姿态没变化时不发包，避免空闲时持续唤醒房间。
+      if (!shot || !Number.isFinite(shot.angle)) return;
+      if (lastAimAngle === shot.angle && Math.abs(lastAimPower - shot.power) < 0.002) return;
+      if (now - lastAimSent < 40) return;
       lastAimSent = now;
       if (seat < 0) return;
+      lastAimAngle = shot.angle;
+      lastAimPower = shot.power;
       send({ t: 'aim', angle: shot.angle, power: shot.power });
     },
     rematch() { send({ t: 'rematch' }); },

@@ -86,6 +86,7 @@ let dragTapWorld = null;              // 按下点（世界坐标），仅在「
 let dragTapScreen = null;             // 按下点（屏幕坐标），点球按「手指看到的位置」吸附
 let dragPoint = { x: 0, y: 0 };       // 手指当前位置（画布局部坐标），放大镜跟着它走
 let magnifier = null;                 // 拖动蓄力时手指上方的放大镜
+let opponentAimShown = null;          // 对手瞄准的平滑角度（网络消息是离散的）
 let dragPointerType = 'touch';        // 鼠标不弹放大镜，只有手指才需要
 let placing = false;                  // 自由球：正在拖动母球摆位
 let placePos = { x: 0, y: 0 };
@@ -291,6 +292,24 @@ function fireShot() {
 /** 轻震动反馈：支持才震，不支持（桌面/部分 iOS）静默跳过 */
 function kick(ms = 10) {
   try { if (navigator.vibrate) navigator.vibrate(ms); } catch { }
+}
+
+/**
+ * 对手瞄准每 40ms 才来一条消息，直接画会一顿一顿。
+ * 这里按最短角差插值过去，看起来就像真的在慢慢转杆。
+ */
+function smoothOpponentAim(raw) {
+  if (!raw || !Number.isFinite(raw.angle)) { opponentAimShown = null; return null; }
+  if (!opponentAimShown) {
+    opponentAimShown = { angle: raw.angle, power: raw.power };
+    return opponentAimShown;
+  }
+  let delta = raw.angle - opponentAimShown.angle;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  opponentAimShown.angle += delta * 0.42;
+  opponentAimShown.power += (raw.power - opponentAimShown.power) * 0.3;
+  return opponentAimShown;
 }
 
 function bindInput() {
@@ -959,7 +978,7 @@ function loop() {
       targetLegal: aimLockedBallId != null ? isLegalTarget(view.match, aimLockedBallId) : true,
       guide: aimGuide,
     },
-    opponentAim: view.opponentAim,
+    opponentAim: smoothOpponentAim(view.opponentAim),
     isMyTurn: view.canShoot,
     effects: collectEffects(nowMs),
     placeHint,
@@ -1039,6 +1058,7 @@ window.__pool = {
   get mode() { return transport && transport.mode; },
   get dragging() { return dragging; },
   get placing() { return placing; },
+  get opponentAimShown() { return opponentAimShown; },
   toScreen: (x, y) => renderer.worldToScreen(x, y),
   /** 预览落袋粒子：__pool.fx(8, x, y) */
   fx(id = 8, x = 0, y = 0) {
