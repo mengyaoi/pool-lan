@@ -50,18 +50,25 @@ const el = {
   overlay: $('#overlay'), ovTitle: $('#ovTitle'), ovScore: $('#ovScore'), ovDesc: $('#ovDesc'),
   spinHint: $('#spinHint'),
   roomBar: $('#roomBar'), btnRoom: $('#btnRoom'),
+  btnView: $('#btnView'),
   roomModal: $('#roomModal'), rmCode: $('#rmCode'), rmInvite: $('#rmInvite'),
   rmCreate: $('#rmCreate'), rmJoin: $('#rmJoin'), rmCopy: $('#rmCopy'),
   rmClose: $('#rmClose'), rmTip: $('#rmTip'),
 };
 
-/** 找出触点附近最近的一颗目标球（不含母球/已落袋），用于「点球瞄准」 */
-function nearestBall(balls, world, radius) {
+/**
+ * 找出触点附近最近的一颗目标球（不含母球/已落袋），用于「点球瞄准」。
+ * 命中半径按「屏幕像素」算：手机横屏一颗球只有 10px，按物理半径算手指
+ * 几乎点不中；按 28px 算才是正常人能稳定点中的大小。
+ */
+function nearestBall(balls, world, radiusPx = 28) {
   let best = null, bestD = Infinity;
   for (const b of balls) {
     if (b.potted || b.id === 0) continue;
-    const d = Math.hypot(b.x - world.x, b.y - world.y);
-    if (d <= radius && d < bestD) { bestD = d; best = b; }
+    const sp = renderer.worldToScreen(b.x, b.y);
+    const wp = renderer.worldToScreen(world.x, world.y);
+    const d = Math.hypot(sp.x - wp.x, sp.y - wp.y);
+    if (d <= radiusPx && d < bestD) { bestD = d; best = b; }
   }
   return best;
 }
@@ -255,7 +262,10 @@ function bindInput() {
     if (view.canPlace) {
       const w = renderer.screenToWorld(p.x, p.y);
       const cur = view.balls.find((b) => b.id === 0);
-      if (cur && Math.hypot(w.x - cur.x, w.y - cur.y) < R * 5) {
+      // 自由球抓取同样按屏幕像素：球很小也要能一把抓住。
+      const curSp = cur ? renderer.worldToScreen(cur.x, cur.y) : null;
+      const pSp = renderer.worldToScreen(w.x, w.y);
+      if (cur && Math.hypot(curSp.x - pSp.x, curSp.y - pSp.y) < 34) {
         placing = true;
         placePos = { x: cur.x, y: cur.y };
         try { canvas.setPointerCapture(e.pointerId); } catch { }
@@ -352,7 +362,7 @@ function bindInput() {
       // 轻点：不改角度，纯瞄准（点了哪颗球就对准哪颗球）
       const cue = view.balls.find((b) => b.id === 0 && !b.potted);
       if (cue) {
-        const target = nearestBall(view.balls, dragTapWorld, R * 2.2);
+        const target = nearestBall(view.balls, dragTapWorld, 30);
         const tx = target ? target.x : dragTapWorld.x;
         const ty = target ? target.y : dragTapWorld.y;
         const dx = tx - cue.x, dy = ty - cue.y;
@@ -374,6 +384,14 @@ function bindInput() {
 
   $('#btnRotateGo').addEventListener('click', () => { enterLandscape(); });
   $('#btnRotateSkip').addEventListener('click', () => { dismissRotateGuide(); resize(); });
+  el.btnView?.addEventListener('click', () => {
+    renderer.toggleCamera();
+    const closeup = renderer.cameraMode === 'closeup';
+    // 按钮显示当前视角，标题说明点击后去哪里。
+    el.btnView.textContent = closeup ? '近景' : '全场';
+    el.btnView.setAttribute('aria-pressed', String(closeup));
+    audio.unlock();
+  });
   $('#btnLandscape').addEventListener('click', () => {
     if (fakeLandscape) { setFakeLandscape(false); syncRotateGuide(); return; }
     if (portraitMQ.matches) {
