@@ -600,11 +600,13 @@ function syncRoomPanel() {
   const local = transport && transport.mode === 'local';
   // 满房时「加入」没有意义：房间还是那两个人，只能新建或等对方退出
   const full = transport && transport.view && transport.view.error && String(transport.view.error).includes('房间已满');
-  el.rmCreate.disabled = local;
-  el.rmJoin.disabled = local || !!full;
+  // 本地模式下也要能直接开新房：禁用按钮只会让人卡在「点不动」，
+  // goRoom 会自动退出本地模式并回到联机。
+  el.rmCreate.disabled = false;
+  el.rmJoin.disabled = !!full;
   el.rmCopy.disabled = !code;
   el.rmTip.textContent = local
-    ? '当前是本地双人模式，点右下角「联机」回到房间模式。'
+    ? '当前是本地双人模式；点「新建房间」或「加入上方房间」会自动回到联机。'
     : full
       ? '这个房间已经有两个人了。点「新建房间」换个号，把新链接发给对方。'
       : '房间号只能有字母、数字、下划线或横线；两人必须用同一个房间号。';
@@ -614,7 +616,12 @@ function openRoomPanel() {
   if (!el.roomModal) return;
   syncRoomPanel();
   el.roomModal.classList.remove('hidden');
-  setTimeout(() => { try { el.rmCode.focus(); el.rmCode.select(); } catch { } }, 60);
+  // 手机上自动聚焦会立刻弹出软键盘，把「新建房间」顶到键盘后面，
+  // 用户第一下点击往往只是收键盘。只有鼠标设备才自动聚焦。
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
+  if (!coarse && window.innerWidth > 760) {
+    setTimeout(() => { try { el.rmCode.focus(); el.rmCode.select(); } catch { } }, 60);
+  }
 }
 
 function closeRoomPanel() {
