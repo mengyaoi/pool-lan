@@ -50,7 +50,6 @@ const el = {
   overlay: $('#overlay'), ovTitle: $('#ovTitle'), ovScore: $('#ovScore'), ovDesc: $('#ovDesc'),
   spinHint: $('#spinHint'),
   roomBar: $('#roomBar'), btnRoom: $('#btnRoom'),
-  btnView: $('#btnView'),
   roomModal: $('#roomModal'), rmCode: $('#rmCode'), rmInvite: $('#rmInvite'),
   rmCreate: $('#rmCreate'), rmJoin: $('#rmJoin'), rmCopy: $('#rmCopy'),
   rmClose: $('#rmClose'), rmTip: $('#rmTip'),
@@ -384,14 +383,6 @@ function bindInput() {
 
   $('#btnRotateGo').addEventListener('click', () => { enterLandscape(); });
   $('#btnRotateSkip').addEventListener('click', () => { dismissRotateGuide(); resize(); });
-  el.btnView?.addEventListener('click', () => {
-    renderer.toggleCamera();
-    const closeup = renderer.cameraMode === 'closeup';
-    // 按钮显示当前视角，标题说明点击后去哪里。
-    el.btnView.textContent = closeup ? '近景' : '全场';
-    el.btnView.setAttribute('aria-pressed', String(closeup));
-    audio.unlock();
-  });
   $('#btnLandscape').addEventListener('click', () => {
     if (fakeLandscape) { setFakeLandscape(false); syncRotateGuide(); return; }
     if (portraitMQ.matches) {
@@ -888,6 +879,8 @@ async function boot() {
   }
   resize();
   new ResizeObserver(resize).observe($('#stage'));
+  // 旋转后 stage 可能在下一帧才拿到最终高度，直接观察画布自身尺寸。
+  new ResizeObserver(resize).observe(document.querySelector('#table'));
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 

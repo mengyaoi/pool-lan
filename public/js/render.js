@@ -14,8 +14,6 @@ const SPRITE_K = SPS / (2 * SPR);   // 贴图与真实直径的比例
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let dpr = 1, cssW = 0, cssH = 0, scale = 1, cx = 0, cy = 0;
-  // 手机横屏时自动近景：围绕母球/目标球取景，让球和球号真正看得清。
-  const cam = { z: 1, x: 0, y: 0, last: 0, mode: 'full' };
   let staticLayer = null;
   const sprites = new Map();
 
@@ -23,21 +21,11 @@ export function createRenderer(canvas) {
   const sx = (x) => cx + x * scale;
   const sy = (y) => cy - y * scale;          // 物理 y 向上 → 屏幕 y 向下
 
-  function cameraTransform() {
-    const tx = cx - cam.z * (cx + cam.x * scale);
-    const ty = cy - cam.z * (cy - cam.y * scale);
-    return { tx, ty };
-  }
-
   function screenToWorld(px, py) {
-    const { tx, ty } = cameraTransform();
-    const bx = (px - tx) / cam.z;
-    const by = (py - ty) / cam.z;
-    return { x: (bx - cx) / scale, y: -(by - cy) / scale };
+    return { x: (px - cx) / scale, y: -(py - cy) / scale };
   }
   function worldToScreen(x, y) {
-    const { tx, ty } = cameraTransform();
-    return { x: tx + cam.z * (cx + x * scale), y: ty + cam.z * (cy - y * scale) };
+    return { x: cx + x * scale, y: cy - y * scale };
   }
 
   /* ---------------- 球贴图 ---------------- */
@@ -874,8 +862,8 @@ export function createRenderer(canvas) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // 手机横屏 HUD/操作栏是悬浮层，桌边留一点空隙避免被按钮压住。
-    const compactLandscape = cssH >= 300 && cssW / Math.max(1, cssH) > 1.7;
-    const pad = compactLandscape ? 0.93 : 0.985;
+    // 整桌始终完整入镜：任何方向都用同一个留白系数，绝不裁切袋口。
+    const pad = 0.985;
     scale = Math.min(cssW / OUTER_W, cssH / OUTER_H) * pad;
     cx = cssW / 2;
     cy = cssH / 2;
@@ -883,72 +871,11 @@ export function createRenderer(canvas) {
     resizeFxLayer();
   }
 
-  /**
-   * 手机横屏可用的高度通常只有 240~270px，整桌等比缩放后球只剩 10px。
-   * 这里不改球桌比例，而是把镜头推向「母球 → 预测碰撞点」：
-   * 球桌仍是原来的球桌，只是眼前这一段变大，和真实台球低头瞄准一致。
-   */
-  function updateCamera(state, now) {
-    const phoneLandscape =
-      (cssH < 500 && cssW / Math.max(1, cssH) > 1.7) ||
-      document.body.classList.contains('fake-landscape');
-    const aiming = !!(state.isMyTurn && state.aim && state.aim.pred);
-    // full = 整桌（默认）；closeup = 手机横屏局部近景。
-    const useCloseup = phoneLandscape && cam.mode === 'closeup';
-    const targetZ = useCloseup && aiming ? 1.22 : 1;
-
-    let fx = 0, fy = 0;
-    let needW = 0, needH = 0;
-    const cue = state.balls && state.balls.find((b) => b.id === 0 && !b.potted);
-    if (cue) {
-      fx = cue.x; fy = cue.y;
-      const hit = state.aim && state.aim.pred && state.aim.pred.hit;
-      if (aiming && hit) {
-        // 取景同时包含母球和预测碰撞点：长距离球自动退一点，
-        // 短距离瞄准保持近景，不会把整片袋口裁掉。
-        fx = cue.x * 0.64 + hit.x * 0.36;
-        fy = cue.y * 0.64 + hit.y * 0.36;
-        needW = Math.abs(cue.x - hit.x) + 0.42;
-        needH = Math.abs(cue.y - hit.y) + 0.42;
-      }
-    }
-
-    // 用瞄准段长度限制倍率，避免远处目标球被裁出画面。
-    const fitZ = Math.min(
-      cssW / Math.max(1, needW * scale),
-      cssH / Math.max(1, needH * scale),
-    );
-    const z = Math.min(targetZ, Math.max(1, fitZ));
-    const halfW = cssW / (2 * scale * z);
-    const halfH = cssH / (2 * scale * z);
-    const clamp = (v, lo, hi) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
-    const tx = clamp(fx, -TW / 2 + halfW, TW / 2 - halfW);
-    const ty = clamp(fy, -TH / 2 + halfH, TH / 2 - halfH);
-
-    // 首帧直接落位；之后指数平滑，跟随瞄准移动但不会抖。
-    if (!cam.last) {
-      cam.z = z; cam.x = tx; cam.y = ty;
-    } else {
-      const k = Math.min(1, Math.max(0, (now - cam.last) / 110));
-      cam.z += (z - cam.z) * k;
-      cam.x += (tx - cam.x) * k;
-      cam.y += (ty - cam.y) * k;
-    }
-    cam.last = now;
-  }
-
   function render(state) {
     const now = state.now != null ? state.now : performance.now();
-    updateCamera(state, now);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
     drawBackdrop();
-
-    // 球桌、球、瞄准线和球杆都在相机空间里绘制；背景与彩带留在屏幕空间。
-    const t = cameraTransform();
-    ctx.save();
-    ctx.translate(t.tx, t.ty);
-    ctx.scale(cam.z, cam.z);
     if (staticLayer) ctx.drawImage(staticLayer, 0, 0, cssW, cssH);
 
     drawBalls(state.balls);
@@ -971,7 +898,6 @@ export function createRenderer(canvas) {
     }
 
     drawEffects(state.effects);
-    ctx.restore();
     // 彩带画在最上层（DOM overlay 之下、所有 canvas 内容之上）
     drawConfetti(now);
   }
@@ -980,15 +906,8 @@ export function createRenderer(canvas) {
     resize,
     render,
     celebrate,
-    toggleCamera() {
-      cam.mode = cam.mode === 'full' ? 'closeup' : 'full';
-      cam.last = 0;
-      return cam.mode === 'full';
-    },
-    get cameraMode() { return cam.mode; },
     screenToWorld,
     worldToScreen,
-    get camera() { return { z: cam.z, x: cam.x, y: cam.y }; },
     get scale() { return scale; },
     get size() { return { w: cssW, h: cssH }; },
   };
