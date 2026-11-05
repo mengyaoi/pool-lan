@@ -474,12 +474,16 @@ function syncRoomPanel() {
   el.rmCode.value = code;
   el.rmInvite.textContent = code ? inviteUrl(code) : '连接成功后生成邀请链接';
   const local = transport && transport.mode === 'local';
+  // 满房时「加入」没有意义：房间还是那两个人，只能新建或等对方退出
+  const full = transport && transport.view && transport.view.error && String(transport.view.error).includes('房间已满');
   el.rmCreate.disabled = local;
-  el.rmJoin.disabled = local;
+  el.rmJoin.disabled = local || !!full;
   el.rmCopy.disabled = !code;
   el.rmTip.textContent = local
     ? '当前是本地双人模式，点右下角「联机」回到房间模式。'
-    : '房间号只能有字母、数字、下划线或横线；两人必须用同一个房间号。';
+    : full
+      ? '这个房间已经有两个人了。点「新建房间」换个号，把新链接发给对方。'
+      : '房间号只能有字母、数字、下划线或横线；两人必须用同一个房间号。';
 }
 
 function openRoomPanel() {
@@ -497,6 +501,12 @@ function closeRoomPanel() {
 function goRoom(code) {
   const c = cleanRoomCode(code);
   if (!c) { showToast('房间号不能为空'); return false; }
+  // 联机模式优先原地重连：不用刷新整页，满房也能马上换下一个号
+  if (transport && transport.mode === 'net' && typeof transport.reconnectTo === 'function') {
+    closeRoomPanel();
+    showToast(`正在进入房间 ${c}`);
+    return transport.reconnectTo(c);
+  }
   const u = new URL(location.href);
   u.searchParams.set('room', c);
   u.searchParams.delete('local');
@@ -850,7 +860,11 @@ async function boot() {
       onStatus: (s) => {
         if (s === 'connected') setStatus('已连接 · 等待双方就位');
         else if (s === 'closed') setStatus('连接断开，重连中…');
-        else if (s === 'full') setStatus('房间已满 · 换房间号或稍后重试');
+        else if (s === 'full') {
+          setStatus('房间已满 · 点「房间」新建一个');
+          // 满房时直接把面板递到手上，别让人对着错误提示干瞪眼
+          openRoomPanel();
+        }
       },
     }), 'net');
   }

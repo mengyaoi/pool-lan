@@ -91,7 +91,12 @@ export class RoomDO {
     const token = url.searchParams.get('token') || '';
     const name = url.searchParams.get('name') || '';
 
-    const r = seatPlayer(room, { name, token });
+    // 用真实活着的连接核对座位：崩溃/被系统杀掉的旧连接不会走 close，
+    // 座位上却一直留着记录，结果房间永远「已满」。
+    const liveSeats = this.state.getWebSockets()
+      .map((ws) => (ws.deserializeAttachment() || {}).seat)
+      .filter((s) => Number.isInteger(s));
+    const r = seatPlayer(room, { name, token, liveSeats });
     if (r.full) {
       // 房间已满：不开 socket，直接拒绝，省一次消息往返
       server.accept();
@@ -136,7 +141,13 @@ export class RoomDO {
     const seat = att.seat;
     const room = await this.load(this.roomId);
 
-    if (msg.t === 'ping') { try { ws.send(JSON.stringify(out.pong(msg.ts))); } catch { } return; }
+    if (msg.t === 'ping') {
+      // 心跳顺便刷新 lastSeen：DO 里 close 不一定会触发，靠这个判断座位上的人还活着
+      const me = room.players.find((p) => p.seat === seat);
+      if (me) { me.lastSeen = Date.now(); me.goneAt = 0; }
+      try { ws.send(JSON.stringify(out.pong(msg.ts))); } catch { }
+      return;
+    }
     if (msg.t === 'join') { try { ws.send(JSON.stringify(out.room(publicRoom(room)))); } catch { } return; }
     if (msg.t === 'resync') { try { ws.send(JSON.stringify({ t: 'state', room: publicRoom(room) })); } catch { } return; }
 

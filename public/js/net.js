@@ -219,6 +219,33 @@ export function createNetTransport(url, { onStatus } = {}) {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
   }
 
+  /** 满房后自助换房：直接重连到新房间，不必整页刷新 */
+  function reconnectTo(roomId) {
+    const r = String(roomId || '').trim().slice(0, 24).replace(/[^A-Za-z0-9_-]/g, '');
+    if (!r) return false;
+    const u = new URL(location.href);
+    u.searchParams.set('room', r);
+    u.searchParams.delete('local');
+    history.replaceState(null, '', u.toString());
+    // roomId 由 welcome 填；换房期间先显示新号，别让面板还挂着旧房间
+    view.roomId = r;
+    room = r;
+    fatal = false;
+    error = null;
+    players = [];
+    world = null;
+    settling = false;
+    seat = -1;
+    Object.assign(match, createMatch());
+    match.phase = 'wait';
+    view.phase = 'wait';
+    view.balls = [];
+    view.error = null;
+    try { if (ws) ws.close(); } catch { }
+    connect();
+    return true;
+  }
+
   /* ---------- 物理 ---------- */
 
   function buildWorld(round) {
@@ -354,13 +381,17 @@ export function createNetTransport(url, { onStatus } = {}) {
 
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wantRoom = new URLSearchParams(location.search).get('room') || 'main';
+    // 用变量 room 而不是每次从 URL 读：换房时先定位到新房间再重连
+    const wantRoom = room || new URLSearchParams(location.search).get('room') || 'main';
     const base = url || `${proto}//${location.host}/api/ws`;
     const wsUrl = `${base}?room=${encodeURIComponent(wantRoom)}&token=${encodeURIComponent(token)}`;
     onStatus && onStatus('connecting');
-    ws = new WebSocket(wsUrl);
+    // 每次连接持有自己的 socket 引用：换房时旧连接的 onclose 不会污染新房状态
+    const myWs = new WebSocket(wsUrl);
+    ws = myWs;
 
-    ws.onopen = () => {
+    myWs.onopen = () => {
+      if (ws !== myWs) return;
       connected = true;
       error = null;
       onStatus && onStatus('connected');
@@ -374,13 +405,15 @@ export function createNetTransport(url, { onStatus } = {}) {
       }, 2000);
     };
 
-    ws.onmessage = (ev) => {
+    myWs.onmessage = (ev) => {
+      if (ws !== myWs) return;
       let m;
       try { m = JSON.parse(ev.data); } catch { return; }
       handle(m);
     };
 
-    ws.onclose = () => {
+    myWs.onclose = () => {
+      if (ws !== myWs) return;   // 被换房主动关掉的旧连接，忽略
       connected = false;
       clearInterval(pingTimer);
       if (!disposed && !fatal) {
@@ -389,7 +422,7 @@ export function createNetTransport(url, { onStatus } = {}) {
       }
     };
 
-    ws.onerror = () => { error = '无法连接服务端'; };
+    myWs.onerror = () => { if (ws === myWs) error = '无法连接服务端'; };
   }
 
   function handle(m) {
@@ -610,6 +643,7 @@ export function createNetTransport(url, { onStatus } = {}) {
       send({ t: 'aim', angle: shot.angle, power: shot.power });
     },
     rematch() { send({ t: 'rematch' }); },
+    reconnectTo,
     drain() { const q = queue; queue = []; return q; },
     dispose() {
       disposed = true;

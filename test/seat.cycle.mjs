@@ -69,5 +69,33 @@ const ok = (c, m) => { if (c) { pass++; console.log('  PASS', m); } else { fail+
   ok(room.players.length === 1, '无效离开不影响在场玩家');
 }
 
+// 5. 座位占着但服务器上已经没有活连接 → 立刻回收，不能报「房间已满」
+//    线上真实事故：旧标签页/崩溃的连接没走 close，goneAt=0，满房永远解不开。
+{
+  const room = createRoom('r5');
+  seatPlayer(room, { name: 'GhostA', token: 'ghost-a' });
+  seatPlayer(room, { name: 'GhostB', token: 'ghost-b' });
+  ok(room.players.length === 2, '两个幽灵座位已占满');
+  // 让它们看起来是 30 秒前就断了的僵尸座位
+  for (const p of room.players) { p.goneAt = Date.now() - 30000; p.lastSeen = Date.now() - 30000; }
+
+  // 新玩家进来时，服务器报告没有任何活连接（liveSeats 为空）
+  const c = seatPlayer(room, { name: 'C', token: 'tc', liveSeats: [] });
+  ok(c.full === false, '死座被回收，新人不再被判满房');
+  ok(c.seat === 0 || c.seat === 1, `新人拿到可用座位（实际 ${c.seat}）`);
+  ok(room.players.length === 1 && room.players[0].token === 'tc', '只剩真实新玩家，幽灵座位已清除');
+}
+
+// 6. 活连接仍占座时必须照常拒绝第三人（回收逻辑不能误伤真人）
+{
+  const room = createRoom('r6');
+  const a = seatPlayer(room, { name: 'A', token: 'ta', liveSeats: [] });
+  const b = seatPlayer(room, { name: 'B', token: 'tb', liveSeats: [a.seat] });
+  ok(a.seat === 0 && b.seat === 1, 'A/B 正常入座');
+  const c = seatPlayer(room, { name: 'C', token: 'tc', liveSeats: [a.seat, b.seat] });
+  ok(c.full === true, '两个活连接在座时第三人仍被拒');
+  ok(room.players.length === 2, '拒绝第三人后座位数没有变化');
+}
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
