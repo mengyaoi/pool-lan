@@ -586,6 +586,38 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
+  /* 目标球 → 袋口：一条淡绿虚线 + 袋口小环。
+     它只是「建议路线」，真正打不打得进仍由物理决定。 */
+  function drawPocketGuide(g) {
+    const t = { x: sx(g.target.x), y: sy(g.target.y) };
+    const p = { x: sx(g.pocket.x), y: sy(g.pocket.y) };
+    const gh = { x: sx(g.ghost.x), y: sy(g.ghost.y) };
+    ctx.save();
+    ctx.setLineDash([5, 7]);
+    ctx.lineWidth = Math.max(1.2, scale * 0.003);
+    ctx.strokeStyle = 'rgba(120,255,190,0.5)';
+    ctx.beginPath();
+    ctx.moveTo(t.x, t.y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+
+    // 理想的母球碰撞点（幽灵球）
+    ctx.setLineDash([2, 5]);
+    ctx.strokeStyle = 'rgba(120,255,190,0.32)';
+    ctx.beginPath();
+    ctx.arc(gh.x, gh.y, R * scale, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 袋口提示环
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, R * scale * 1.5, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(120,255,190,0.8)';
+    ctx.lineWidth = Math.max(1.6, scale * 0.0036);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   /* ---------------- 球杆 ---------------- */
   function drawCue(cuePos, angle, power) {
     const px = sx(cuePos.x), py = sy(cuePos.y);
@@ -898,6 +930,7 @@ export function createRenderer(canvas) {
         drawTargetRing(state.balls, state.aim.targetId, state.now, state.aim.targetLegal !== false);
       }
       drawAimLine(cue, state.aim.pred, 0.55);
+      if (state.aim.guide) drawPocketGuide(state.aim.guide);
       if (state.aim.showCue) drawCue(cue, state.aim.angle, state.aim.power);
     }
 

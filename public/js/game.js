@@ -5,8 +5,9 @@
 import { createRenderer } from './render.js';
 import { createAudio } from './audio.js';
 import { createLocalTransport, createNetTransport } from './net.js';
-import { predictAim, R, BALL_COLORS } from './physics.js';
+import { predictAim, R, BALL_COLORS, POCKETS } from './physics.js';
 import { GROUP_SOLID, GROUP_STRIPE, groupRemaining, isLegalTarget } from './rules.js';
+import { bestPocketGuide } from './aim-guide.js';
 
 // 文案直接写「光球 / 花球」，跟玩家口语一致，避免「实心/花色」看不懂
 const GROUP_SHORT = { [GROUP_SOLID]: '光球 1-7', [GROUP_STRIPE]: '花球 9-15', null: '未定', undefined: '未定' };
@@ -79,6 +80,7 @@ let dragging = false;
 let dragStart = { x: 0, y: 0 };
 let dragMode = null;                  // 'pending' = 还没拖动（轻点瞄准），'power' = 拖动蓄力
 let aimLockedBallId = null;           // 最近一次点中的目标球（只用于提示）
+let aimGuide = null;                  // 目标球 → 最近袋口的辅助线（null = 没有可用袋口）
 let dragTapWorld = null;              // 按下点（世界坐标），仅在「轻点」时用来瞄准
 let dragTapScreen = null;             // 按下点（屏幕坐标），点球按「手指看到的位置」吸附
 let dragPoint = { x: 0, y: 0 };       // 手指当前位置（画布局部坐标），放大镜跟着它走
@@ -372,6 +374,14 @@ function bindInput() {
         if (Math.hypot(dx, dy) > R * 0.6) {
           aim.angle = Math.atan2(dy, dx);
           aimLockedBallId = target ? target.id : null;
+          const g = target ? bestPocketGuide(view.balls, target) : null;
+          if (g) {
+            // 轻吸附：只有当你点的大方向已经接近进球线时才拉正，绝不抢走瞄准。
+            let delta = g.angle - aim.angle;
+            while (delta > Math.PI) delta -= Math.PI * 2;
+            while (delta < -Math.PI) delta += Math.PI * 2;
+            if (Math.abs(delta) < (6 * Math.PI) / 180) aim.angle = g.angle;
+          }
           // 点到不该打的球时立刻说清楚，别等出杆后才吃犯规。
           if (target && !isLegalTarget(view.match, target.id)) {
             const me = view.match.turn === 1 ? 1 : 0;
@@ -827,10 +837,16 @@ function loop() {
   if (canAim) {
     aim.pred = predictAim({ balls: view.balls }, aim.angle);
     aim.showCue = true;
+    // 每帧按当前目标球找最近袋口：球动过或已落袋时不会留着旧路线。
+    const tgt = aimLockedBallId != null
+      ? view.balls.find((b) => b.id === aimLockedBallId && !b.potted)
+      : null;
+    aimGuide = tgt ? bestPocketGuide(view.balls, tgt) : null;
     if (!dragging) transport.aim({ angle: aim.angle, power: aim.power, spin: aim.spin });
   } else {
     aim.pred = null;
     aim.showCue = false;
+    aimGuide = null;
   }
 
   // 手指下方的小球看不清：在手指上方浮一个放大镜。
@@ -877,6 +893,7 @@ function loop() {
       ...aim,
       targetId: aimLockedBallId,
       targetLegal: aimLockedBallId != null ? isLegalTarget(view.match, aimLockedBallId) : true,
+      guide: aimGuide,
     },
     opponentAim: view.opponentAim,
     isMyTurn: view.canShoot,
