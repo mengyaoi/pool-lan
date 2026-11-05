@@ -23,7 +23,10 @@
 
     <div id="center">
       <div id="status">正在连接…</div>
-      <div id="room"></div>
+      <button id="roomBar" class="roombar" type="button" title="创建或加入房间">
+        <span id="room">连接中…</span>
+        <span class="roombar-cta">房间</span>
+      </button>
     </div>
 
     <div class="pcard" id="card1">
@@ -77,6 +80,7 @@
     </div>
 
     <div class="btns">
+      <button id="btnRoom" class="ghost">房间</button>
       <button id="btnLocal" class="ghost">本地双人</button>
       <button id="btnLandscape" class="ghost">横屏</button>
       <button id="btnSound" class="ghost">音效 开</button>
@@ -90,6 +94,30 @@
       <div id="ovScore">0 : 0</div>
       <p id="ovDesc"></p>
       <button id="ovBtn" class="primary big">再来一局</button>
+    </div>
+  </div>
+
+  <div id="roomModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="rmTitle">
+    <div class="panel roompanel">
+      <h2 id="rmTitle">房间</h2>
+      <p class="rm-desc">创建后把邀请链接发给对方，同一个房间号就能开一局。</p>
+
+      <div class="rm-block">
+        <label class="rm-label" for="rmCode">当前房间号</label>
+        <div class="rm-row">
+          <input id="rmCode" class="rm-input" type="text" maxlength="24" autocapitalize="off"
+                 autocomplete="off" spellcheck="false" placeholder="例如 8f3k2a">
+          <button id="rmCopy" class="ghost" type="button">复制链接</button>
+        </div>
+        <div class="rm-invite" id="rmInvite"></div>
+      </div>
+
+      <div class="rm-actions">
+        <button id="rmCreate" class="primary" type="button">新建房间</button>
+        <button id="rmJoin" class="ghost" type="button">加入上方房间</button>
+      </div>
+      <p class="rm-tip" id="rmTip">房间号只能有字母、数字、下划线或横线。</p>
+      <button id="rmClose" class="linklike" type="button">关闭</button>
     </div>
   </div>
 

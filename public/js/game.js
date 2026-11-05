@@ -49,6 +49,10 @@ const el = {
   toast: $('#toast'), hint: $('#hint'),
   overlay: $('#overlay'), ovTitle: $('#ovTitle'), ovScore: $('#ovScore'), ovDesc: $('#ovDesc'),
   spinHint: $('#spinHint'),
+  roomBar: $('#roomBar'), btnRoom: $('#btnRoom'),
+  roomModal: $('#roomModal'), rmCode: $('#rmCode'), rmInvite: $('#rmInvite'),
+  rmCreate: $('#rmCreate'), rmJoin: $('#rmJoin'), rmCopy: $('#rmCopy'),
+  rmClose: $('#rmClose'), rmTip: $('#rmTip'),
 };
 
 /** 找出触点附近最近的一颗目标球（不含母球/已落袋），用于「点球瞄准」 */
@@ -207,6 +211,8 @@ function initPowerSlider() {
   // 键盘：方向键调力量，回车出杆
   track.addEventListener('keydown', (e) => {
     if (!view || !view.canShoot) return;
+    // 房间面板开着时，输入房间号的按键不能顺带触发「空格出杆」
+    if (!el.roomModal?.classList.contains('hidden')) return;
     if (e.key === 'Enter' || e.key === ' ') { fireShot(); e.preventDefault(); return; }
     if (e.key === 'ArrowRight' || e.key === 'ArrowUp') aim.power = Math.min(1, aim.power + 0.05);
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') aim.power = Math.max(0, aim.power - 0.05);
@@ -388,7 +394,10 @@ function bindInput() {
 
   $('#btnLocal').addEventListener('click', () => {
     if (transport && transport.mode === 'local') {
-      showToast('当前已是本地双人模式');
+      // 再点一次回到联机：之前切到本地后没有回头路，只能手动改网址
+      const u = new URL(location.href);
+      u.searchParams.delete('local');
+      location.href = u.toString();
       return;
     }
     switchTransport(createLocalTransport({ names: ['玩家 1', '玩家 2'] }), 'local');
@@ -430,6 +439,118 @@ function showToast(text) {
 /* ------------------------------------------------------------------ */
 /* 横屏引导                                                            */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* 房间：创建 / 加入 / 复制邀请链接                                    */
+/* ------------------------------------------------------------------ */
+const ROOM_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';   // 去掉 0/o/1/l/i，口述不容易听错
+
+/** 生成一个 6 位短房间号；房间号只用于进同一个房间，不需要全局唯一 */
+function makeRoomCode() {
+  let s = '';
+  const buf = new Uint8Array(6);
+  (window.crypto || {}).getRandomValues?.(buf);
+  for (let i = 0; i < 6; i++) {
+    const r = buf[i] ?? Math.floor(Math.random() * 256);
+    s += ROOM_CHARS[r % ROOM_CHARS.length];
+  }
+  return s;
+}
+
+/** 与服务端 normalizeRoom 保持同一规则，避免用户输入了「看起来一样」却进错房间 */
+function cleanRoomCode(raw) {
+  return String(raw || '').trim().slice(0, 24).replace(/[^A-Za-z0-9_-]/g, '');
+}
+
+function inviteUrl(code) {
+  const u = new URL(location.href);
+  u.searchParams.set('room', code);
+  u.searchParams.delete('local');
+  return u.toString();
+}
+
+function syncRoomPanel() {
+  if (!el.rmCode || !el.rmInvite) return;
+  const code = cleanRoomCode(view && view.roomId) || cleanRoomCode(new URLSearchParams(location.search).get('room'));
+  el.rmCode.value = code;
+  el.rmInvite.textContent = code ? inviteUrl(code) : '连接成功后生成邀请链接';
+  const local = transport && transport.mode === 'local';
+  el.rmCreate.disabled = local;
+  el.rmJoin.disabled = local;
+  el.rmCopy.disabled = !code;
+  el.rmTip.textContent = local
+    ? '当前是本地双人模式，点右下角「联机」回到房间模式。'
+    : '房间号只能有字母、数字、下划线或横线；两人必须用同一个房间号。';
+}
+
+function openRoomPanel() {
+  if (!el.roomModal) return;
+  syncRoomPanel();
+  el.roomModal.classList.remove('hidden');
+  setTimeout(() => { try { el.rmCode.focus(); el.rmCode.select(); } catch { } }, 60);
+}
+
+function closeRoomPanel() {
+  if (el.roomModal) el.roomModal.classList.add('hidden');
+}
+
+/** 真正切房间：改 URL 后重连，服务端按新 roomId 分配一个独立房间 */
+function goRoom(code) {
+  const c = cleanRoomCode(code);
+  if (!c) { showToast('房间号不能为空'); return false; }
+  const u = new URL(location.href);
+  u.searchParams.set('room', c);
+  u.searchParams.delete('local');
+  location.href = u.toString();
+  return true;
+}
+
+async function copyInvite() {
+  const code = cleanRoomCode(el.rmCode.value) || cleanRoomCode(view && view.roomId);
+  if (!code) return;
+  const link = inviteUrl(code);
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast('邀请链接已复制，发给对方即可');
+  } catch {
+    // 非 HTTPS / 老浏览器没有剪贴板权限：退回手动选中
+    try {
+      el.rmInvite.textContent = link;
+      const range = document.createRange();
+      range.selectNodeContents(el.rmInvite);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      showToast('已选中链接，长按复制');
+    } catch { showToast('复制失败，请长按链接手动复制'); }
+  }
+}
+
+function initRoomPanel() {
+  if (!el.roomModal) return;
+  el.roomBar?.addEventListener('click', openRoomPanel);
+  el.btnRoom?.addEventListener('click', openRoomPanel);
+  // 面板打开时停掉击球手势，避免点面板/输入房间号时误触台面
+  el.roomModal.addEventListener('pointerdown', (e) => e.stopPropagation());
+  el.rmClose?.addEventListener('click', closeRoomPanel);
+  el.rmCopy?.addEventListener('click', copyInvite);
+  el.rmCreate?.addEventListener('click', () => {
+    const code = makeRoomCode();
+    el.rmCode.value = code;
+    el.rmInvite.textContent = inviteUrl(code);
+    goRoom(code);
+  });
+  el.rmJoin?.addEventListener('click', () => {
+    const code = cleanRoomCode(el.rmCode.value);
+    if (!code) { showToast('先输入房间号'); return; }
+    if (code === cleanRoomCode(view && view.roomId)) { closeRoomPanel(); showToast('已经在这个房间了'); return; }
+    goRoom(code);
+  });
+  // 点遮罩关闭；输入框回车直接加入
+  el.roomModal.addEventListener('click', (e) => { if (e.target === el.roomModal) closeRoomPanel(); });
+  el.rmCode?.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.rmJoin.click(); });
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeRoomPanel(); });
+}
+
 const portraitMQ = window.matchMedia('(max-aspect-ratio: 1/1)');
 let rotateDismissed = false;
 let fakeLandscape = false;
@@ -559,8 +680,10 @@ function updateHud(v) {
   renderDots(el.dots1, m.group ? m.group[1] : null, pottedAll);
 
   el.room.textContent = transport.mode === 'net'
-    ? (v.roomId ? `房间 ${v.roomId} · ${location.host}` : '连接中…')
+    ? (v.roomId ? `房间 ${v.roomId}` : '连接中…')
     : '本地双人 · 同屏';
+  // 房间号只在这一个地方展示：桌面点它、手机点底部「房间」，都能改
+  if (el.roomBar) el.roomBar.title = v.roomId ? `房间 ${v.roomId} · 点这里创建或换房` : '点这里创建或加入房间';
 
   const showTurn = v.phase === 'aim' || v.phase === 'run';
   el.card0.classList.toggle('active', showTurn && m.turn === 0);
@@ -714,6 +837,7 @@ async function boot() {
   spinPad = initSpinPad();
   bindInput();
   initPowerSlider();
+  initRoomPanel();
 
   const forcedLocal = new URLSearchParams(location.search).get('local') === '1';
 

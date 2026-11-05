@@ -232,6 +232,71 @@ html, body {
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 #room { font-size: 10px; color: var(--ink-mute); letter-spacing: 1.6px; text-transform: uppercase; }
 
+/* 桌面端：房间号本身就是按钮，点一下打开创建/加入面板 */
+.roombar {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 9px; border-radius: 999px;
+  background: transparent; border: 1px solid transparent;
+  font-family: inherit; cursor: pointer;
+  transition: background .16s, border-color .16s;
+}
+.roombar:hover { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.12); }
+.roombar #room { font-size: 10px; color: var(--ink-mute); letter-spacing: 1.2px; text-transform: none; }
+.roombar-cta {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .5px;
+  color: #9ff3c6; padding: 1px 6px; border-radius: 999px;
+  background: rgba(53,224,140,.14); border: 1px solid rgba(53,224,140,.3);
+}
+
+/* ---------------- 房间面板 ---------------- */
+#roomModal {
+  position: fixed; inset: 0; z-index: 50;
+  display: grid; place-items: center; padding: 16px;
+  background: radial-gradient(circle at 50% 40%, rgba(10,40,26,.6), rgba(3,8,6,.86) 70%);
+  backdrop-filter: blur(9px);
+  -webkit-backdrop-filter: blur(9px);
+  transition: opacity .24s;
+}
+#roomModal.hidden { display: none; }
+.roompanel {
+  width: min(100%, 420px); min-width: 0;
+  padding: 26px 26px 18px;
+  text-align: left;
+  background:
+    linear-gradient(180deg, rgba(40,70,55,.5), rgba(10,24,18,0) 42%),
+    linear-gradient(160deg, rgba(28,50,40,.98), rgba(10,22,17,.99));
+  border: 1px solid rgba(53,224,140,.28);
+  border-radius: 24px;
+  box-shadow: 0 40px 90px -30px #000, inset 0 1px 0 rgba(255,255,255,.09);
+  animation: pop .3s cubic-bezier(.2,1.3,.5,1);
+}
+.roompanel h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: 1.4px; }
+.rm-desc { margin: 0 0 16px; font-size: 12px; line-height: 1.65; color: var(--ink-dim); }
+.rm-block { margin-bottom: 14px; }
+.rm-label { display: block; margin-bottom: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 1.2px; color: var(--ink-mute); }
+.rm-row { display: flex; gap: 8px; }
+.rm-input {
+  flex: 1; min-width: 0;
+  padding: 10px 13px; border-radius: 12px;
+  font-family: inherit; font-size: 15px; font-weight: 700; letter-spacing: 2.5px;
+  color: var(--ink); background: rgba(0,0,0,.34);
+  border: 1px solid rgba(255,255,255,.14);
+  outline: none;
+}
+.rm-input:focus { border-color: rgba(53,224,140,.55); box-shadow: 0 0 0 3px rgba(53,224,140,.14); }
+.rm-invite {
+  margin-top: 8px; padding: 7px 10px; border-radius: 9px;
+  font-size: 10.5px; line-height: 1.5; word-break: break-all;
+  color: #8fe0b8; background: rgba(0,0,0,.26);
+  border: 1px dashed rgba(53,224,140,.24);
+  user-select: all; -webkit-user-select: all;
+}
+.rm-actions { display: flex; gap: 9px; margin-top: 4px; }
+.rm-actions button { flex: 1; }
+.rm-tip { margin: 11px 0 4px; font-size: 10.5px; line-height: 1.55; color: var(--ink-mute); }
+.roompanel > .linklike { display: block; margin: 6px auto 0; background: none; border: 0; color: var(--ink-mute); font-size: 11.5px; cursor: pointer; }
+.roompanel > .linklike:hover { color: var(--ink-dim); }
+
 /* ---------------- 台面 ---------------- */
 #stage {
   position: relative; flex: 1 1 auto; min-height: 0;
@@ -561,6 +626,7 @@ button.off { opacity: .45; }
   #power { gap: 4px; flex: 1 1 110px; min-width: 100px; }
   .btns { flex: 1 0 100%; justify-content: flex-end; gap: 6px; }
   #btnLocal { display: none; }
+  #btnRoom { display: inline-block; }
   button { padding: 8px 11px; font-size: 11.5px; border-radius: 10px; }
 }
 
@@ -619,6 +685,29 @@ button.off { opacity: .45; }
   #dock { flex-wrap: nowrap; }
   .btns { flex: 0 0 auto; }
   #btnLocal { display: inline-block; }
+}
+
+/* 手机横屏/竖屏：面板不能顶出屏幕，也绝不能改 #dock 高度 */
+@media (max-width: 760px), (max-height: 560px) {
+  #roomModal { padding: 10px; align-items: center; }
+  .roompanel { width: min(100%, 400px); padding: 18px 18px 12px; border-radius: 20px; }
+  .roompanel h2 { font-size: 16px; margin-bottom: 4px; }
+  .rm-desc { font-size: 11px; margin-bottom: 11px; line-height: 1.55; }
+  .rm-input { padding: 8px 11px; font-size: 14px; }
+  .rm-invite { font-size: 10px; padding: 6px 8px; }
+  .rm-tip { font-size: 10px; margin: 8px 0 2px; }
+  .rm-actions button { padding: 9px 8px; font-size: 11.5px; }
+}
+
+/* 横屏高度紧张时把说明压到最小，保证主要按钮都在屏内 */
+@media (orientation: landscape) and (max-height: 430px) {
+  .roompanel { width: min(100%, 400px); padding: 12px 16px 8px; }
+  .rm-desc { display: none; }
+  .roompanel h2 { margin-bottom: 6px; }
+  .rm-label { margin-bottom: 4px; }
+  .rm-invite { margin-top: 6px; }
+  .rm-tip { display: none; }
+  .roompanel > .linklike { margin-top: 2px; }
 }
 
 /* 超窄竖屏：压小 HUD 和引导卡，避免它们压住操作栏 */
