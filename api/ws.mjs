@@ -14,7 +14,7 @@ import { WebSocketServer } from 'ws';
 import { normalizeRoom, out, PROTOCOL } from '../lib/protocol.mjs';
 import {
   createRoom, publicRoom, seatPlayer, acceptShot, acceptPlace,
-  reportShot, requestRematch, leavePlayer,
+  reportShot, requestRematch, leavePlayer, recoverStalled,
 } from '../lib/room.mjs';
 
 /** 房间表：同实例内共享。进程被回收时房间也随之消失（客户端会重连重建）。 */
@@ -104,6 +104,8 @@ wss.on('connection', (ws, req) => {
 
     if (!settled) { ws.send(JSON.stringify(out.err('NO_HELLO', '先发 hello'))); return; }
     const room = getRoom(roomId);
+    const recovered = recoverStalled(room);
+    if (recovered.length) broadcastAll(roomId, recovered);
 
     switch (msg.t) {
       case 'join':
@@ -113,6 +115,10 @@ wss.on('connection', (ws, req) => {
       case 'shot': {
         const r = acceptShot(room, seat, msg);
         if (r.ok) broadcastAll(roomId, r.events);
+        else {
+          ws.send(JSON.stringify(out.toast('这一杆服务器没受理，已为你同步回当前局面')));
+          ws.send(JSON.stringify({ t: 'state', room: publicRoom(room), reason: r.reason }));
+        }
         break;
       }
 
@@ -126,6 +132,10 @@ wss.on('connection', (ws, req) => {
       case 'report': {
         const r = reportShot(room, seat, msg);
         if (r.ok) broadcastAll(roomId, r.events);
+        else {
+          ws.send(JSON.stringify(out.toast('结算没对上服务器，已重新同步局面')));
+          ws.send(JSON.stringify({ t: 'state', room: publicRoom(room), reason: r.reason }));
+        }
         break;
       }
 

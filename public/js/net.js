@@ -181,6 +181,12 @@ export function createNetTransport(url, { onStatus } = {}) {
   let markPotted = [];         // 本杆开始前已进袋的球
   let settling = false;        // 本地物理是否在跑
   let pendingReport = null;    // 结算完待上报的结果
+  let shotBackup = null;       // 出杆前局面：服务器拒绝这一杆时原地回滚
+  let shotSentAt = 0;          // 自己出杆的时间：超时没回执就 resync
+  let shotAckPending = false;
+  let reportSentAt = 0;        // 结算上报时间：result 丢了也要能重同步
+  let lastSyncAt = 0;          // 空闲时的周期性权威对账
+  let resolvedShots = 0;       // 本局已由服务器确认的最大 shots（挡住迟到旧包）
   let lastAimSent = 0;
   let rtt = 0;
   let pingAt = 0;
@@ -258,6 +264,7 @@ export function createNetTransport(url, { onStatus } = {}) {
     markPotted = [];
     settling = false;
     pendingReport = null;
+    resolvedShots = 0;
     Object.assign(match, createMatch());
     match.phase = 'aim';
     effects = [];
@@ -289,9 +296,83 @@ export function createNetTransport(url, { onStatus } = {}) {
     return true;
   }
 
+  /** 服务器拒收这一杆：撤回本地已经打出去的球，回到出杆前 */
+  function rollbackShot(why) {
+    if (!shotBackup || !world) return false;
+    applySnapshot(shotBackup.snap);
+    // 只恢复花色/进袋/自由球这些规则状态；turn/phase 一定以服务器为准，
+    // 否则会把刚收到的权威轮次又覆盖回出杆前的旧值（两端显示不同轮次）。
+    const keepTurn = match.turn;
+    const keepPhase = match.phase;
+    Object.assign(match, shotBackup.match);
+    match.turn = keepTurn;
+    match.phase = keepPhase;
+    shotBackup = null;
+    settling = false;
+    wasMyShot = false;
+    shotAckPending = false;
+    shotSentAt = 0;
+    reportSentAt = 0;
+    aim.power = 0;
+    if (why) queue.push({ kind: 'toast', text: why });
+    return true;
+  }
+
+  /** 用服务端 publicRoom 全量落状态（拒收/超时/重连都走这里） */
+  function applyRoomState(r) {
+    if (!r) return;
+    if (Array.isArray(r.players)) {
+      players = r.players;
+      view.names = [0, 1].map((i) => {
+        const p = players.find((x) => x.seat === i);
+        return p ? p.name : `玩家 ${i + 1}`;
+      });
+    }
+    if (typeof r.round === 'number' && r.round > 0 && (!world || roundNo !== r.round)) {
+      roundNo = r.round || 1;
+      buildWorld(roundNo);
+    }
+    const activeShot = settling || wasMyShot;
+    const localShots = Number.isFinite(match.shots) ? match.shots : 0;
+    const serverShots = typeof r.shots === 'number' ? r.shots : localShots;
+    // 旧房间快照（例如 shots=0）晚到，不能把已经落地的 result（shots=1,
+    // group=["solid","stripe"]）重新冲回「开放球台」。
+    const stale = serverShots < localShots && serverShots < resolvedShots;
+    if (stale || activeShot) return;
+
+    if (Array.isArray(r.group)) { match.group = r.group; match.open = !!r.open; }
+    match.ballInHand = r.ballInHand ?? null;
+    if (typeof r.shots === 'number') match.shots = r.shots;
+    // run 表示这一杆的最终球位还没上报，room.snapshot 仍是上一杆的旧位置；
+    // 此时套用会把本地正在结算的台面倒回去。等 result 的停球快照。
+    if (r.snapshot && r.phase !== 'run') applySnapshot(r.snapshot);
+    if (r.phase === 'over') {
+      match.phase = 'over';
+      match.winner = r.winner ?? null;
+      view.phase = 'over';
+    } else if (r.phase === 'wait') {
+      match.phase = 'wait';
+      view.phase = 'wait';
+    } else if (r.phase === 'run') {
+      // 服务器已受理这一杆、还没收到结算：保持 run，不能再允许出杆。
+      match.turn = r.turn;
+      match.phase = 'run';
+      view.phase = 'run';
+    } else {
+      match.turn = r.turn;
+      match.phase = 'aim';
+      view.phase = 'aim';
+    }
+  }
+
   /** 应用一杆（自己发起或对手发起，走同一路径，保证两边算得一样） */
   function applyShotLocal(shot, mine) {
     if (!world) return false;
+    if (mine) {
+      // 记下出杆前局面。若服务器拒收（例如上一杆 pending 挂着），
+      // 必须回到这里，否则本地会继续算出一个对手根本没有的局面。
+      shotBackup = { snap: serializeWorld(world), match: JSON.parse(JSON.stringify(match)) };
+    }
     markPotted = world.pocketed.slice();
     const r = applyShot(world, shot);
     if (!r.ok) return false;
@@ -368,6 +449,7 @@ export function createNetTransport(url, { onStatus } = {}) {
       // 只有出杆方上报，避免两端同时改服务端状态
       if (rep) {
         send(rep);
+        reportSentAt = Date.now();
         pendingReport = null;
       }
       wasMyShot = false;
@@ -464,28 +546,16 @@ export function createNetTransport(url, { onStatus } = {}) {
           world = null;
           settling = false;
         } else if (m.turn !== undefined) {
-          // 重连/刷新后恢复服务端当前轮次与花色，别让自己停留在旧局面。
-          // 刷新时本地还没有 world，必须按房间的回合号重建一张同种子的台面。
-          if (!world || roundNo !== (m.round || 1)) {
-            roundNo = m.round || 1;
-            buildWorld(roundNo);
+          // 重连/刷新后恢复服务端当前局面。
+          // 断网期间本地可能已经打完一杆，而服务器根本没收到：
+          // 这里先用出杆前快照撤回，再整体对齐服务端，避免两端分叉。
+          const localAhead = typeof m.shots === 'number' && match.shots > m.shots;
+          const sameRound = m.round === roundNo;
+          if (sameRound && m.phase === 'aim' && (shotAckPending || localAhead)) {
+            rollbackShot('');
+            queue.push({ kind: 'toast', text: '连接恢复，已按服务器局面重新同步' });
           }
-          if (!settling) {
-            match.turn = m.turn;
-            match.ballInHand = m.ballInHand ?? null;
-            match.phase = m.phase === 'over' ? 'over' : 'aim';
-            view.phase = match.phase;
-          }
-          if (Array.isArray(m.group)) {
-            match.group = m.group;
-            match.open = !!m.open;
-          }
-          if (m.snapshot) applySnapshot(m.snapshot);
-          if (typeof m.shots === 'number') match.shots = m.shots;
-          if (m.phase === 'over') {
-            match.winner = m.winner ?? null;
-            view.phase = 'over';
-          }
+          applyRoomState(m);
         }
         break;
       }
@@ -497,10 +567,36 @@ export function createNetTransport(url, { onStatus } = {}) {
         break;
 
       case 'shot':
-        // 对手出杆：本地用同一参数跑一遍，结果必然一致
-        if (m.seat !== seat) {
+        // 自己这条是服务器「已受理」的回执；对手这条才需要本地开跑。
+        if (m.seat === seat) {
+          shotAckPending = false;
+        } else {
           applyShotLocal(normalizeShot(m), false);
           wasMyShot = false;
+        }
+        break;
+
+      case 'state':
+        // 服务器发来的权威局面：拒收一杆、结算丢失、僵死重开都走这里。
+        // 本地已经算完的这杆必须整段撤回，否则就会出现「一边定组、一边没定」。
+        if (m.room) {
+          const serverRun = m.room.phase === 'run';
+          const localAhead = typeof m.room.shots === 'number' && match.shots > m.room.shots;
+          const rejected = m.reason === 'no-pending' || m.reason === 'not-shooter'
+            || m.reason === 'not-your-turn' || m.reason === 'not-aiming';
+          // 服务端在 run 说明这杆已被受理，不能回滚；反之服务端已回到
+          // aim/wait 而本地还领先，才是「这杆没算上」，必须撤回。
+          // 明确的拒收原因无条件回滚：哪怕服务器正在跑上一杆（not-aiming），
+          // 这一杆也确实没被受理，不回滚就会出现两端球位永久分叉。
+          const wasMidShot = rejected || (!serverRun && (shotAckPending || localAhead));
+          // 若这一杆正是本地刚打完、服务器没受理的：先用出杆前快照撤回球位，
+          // 再用服务器状态对齐轮次/花色。room.snapshot 只保存「上一杆」的结果，
+          // 第一杆被拒时它还是 null，光靠它会留下打飞后的球位。
+          if (wasMidShot) rollbackShot('');
+          applyRoomState(m.room);
+          if (wasMidShot) queue.push({ kind: 'toast', text: m.reason === 'no-pending' || m.reason === 'not-shooter'
+            ? '这一杆服务器没算上，已同步回当前局面'
+            : '已按服务器局面重新同步' });
         }
         break;
 
@@ -530,6 +626,13 @@ export function createNetTransport(url, { onStatus } = {}) {
 
       case 'result': {
         // 服务端裁定的唯一结果：轮次 / 花色 / 自由球 / 胜负 / 停球快照。
+        // shots 更旧的重复 result 直接丢弃，避免迟到消息把新局面改回旧局面。
+        if (typeof m.shots === 'number' && m.shots < resolvedShots) break;
+        if (typeof m.shots === 'number') resolvedShots = Math.max(resolvedShots, m.shots);
+        shotAckPending = false;
+        reportSentAt = 0;
+        shotSentAt = 0;
+        shotBackup = null;
         if (m.seat !== seat && m.snapshot) applySnapshot(m.snapshot);
         if (Array.isArray(m.group)) {
           match.group = m.group;
@@ -562,6 +665,23 @@ export function createNetTransport(url, { onStatus } = {}) {
           const sample = performance.now() - pingAt;
           pingAt = 0;
           if (sample > 0 && sample < 5000) rtt = rtt ? rtt * 0.7 + sample * 0.3 : sample;
+        }
+        // 出杆后迟迟没等到服务器回执：主动要一次权威局面。
+        // 否则「服务器没收到这一杆」时，两边会一直各显示各的。
+        if (shotAckPending && shotSentAt && Date.now() - shotSentAt > 6000) {
+          shotSentAt = 0;
+          send({ t: 'resync' });
+        }
+        // 结算已经发出但没等到 result（例如广播丢失）：同样要权威重同步。
+        if (reportSentAt && Date.now() - reportSentAt > 6000) {
+          reportSentAt = Date.now();
+          send({ t: 'resync' });
+        }
+        // 空闲时定期对账：掉一条 result 也能自动收敛，不会永久分叉。
+        if (!settling && !shotAckPending && !shotBackup && match.phase === 'aim'
+          && Date.now() - lastSyncAt > 8000) {
+          lastSyncAt = Date.now();
+          send({ t: 'resync' });
         }
         break;
 
@@ -632,6 +752,8 @@ export function createNetTransport(url, { onStatus } = {}) {
       // 本地立刻开打，同时把参数发给对手
       if (!applyShotLocal(s, true)) return false;
       wasMyShot = true;
+      shotAckPending = true;
+      shotSentAt = Date.now();
       send({ t: 'shot', ...s });
       return true;
     },

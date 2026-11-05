@@ -14,7 +14,7 @@
 import { normalizeRoom, out, PROTOCOL } from '../lib/protocol.mjs';
 import {
   createRoom, publicRoom, seatPlayer, acceptShot, acceptPlace,
-  reportShot, requestRematch, leavePlayer,
+  reportShot, requestRematch, leavePlayer, recoverStalled,
 } from '../lib/room.mjs';
 
 export default {
@@ -141,6 +141,10 @@ export class RoomDO {
     const seat = att.seat;
     const room = await this.load(this.roomId);
 
+    // 每一帧消息都顺手回收僵死一杆：上报丢失时房间不能永久卡在 run
+    const recovered = recoverStalled(room);
+    if (recovered.length) { this.broadcastAll(recovered); await this.save(); }
+
     if (msg.t === 'ping') {
       // 心跳顺便刷新 lastSeen：DO 里 close 不一定会触发，靠这个判断座位上的人还活着
       const me = room.players.find((p) => p.seat === seat);
@@ -164,6 +168,14 @@ export class RoomDO {
       case 'shot': {
         const r = acceptShot(room, seat, msg);
         if (r.ok) { this.broadcastAll(r.events); await this.save(); }
+        else {
+          // 出杆被拒时必须把权威局面发回去让客户端回滚。
+          // 以前这里直接 break，客户端仍在本地把这杆打完 → 两端分叉（一边定组一边没定）。
+          try {
+            ws.send(JSON.stringify(out.toast('这一杆服务器没受理，已为你同步回当前局面')));
+            ws.send(JSON.stringify({ t: 'state', room: publicRoom(room), reason: r.reason }));
+          } catch { }
+        }
         break;
       }
       case 'place': {
@@ -175,6 +187,12 @@ export class RoomDO {
       case 'report': {
         const r = reportShot(room, seat, msg);
         if (r.ok) { this.broadcastAll(r.events); await this.save(); }
+        else {
+          try {
+            ws.send(JSON.stringify(out.toast('结算没对上服务器，已重新同步局面')));
+            ws.send(JSON.stringify({ t: 'state', room: publicRoom(room), reason: r.reason }));
+          } catch { }
+        }
         break;
       }
       case 'rematch': {

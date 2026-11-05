@@ -116,6 +116,7 @@ export const out = {
   place: (seat, pos) => ({ t: 'place', seat, ...pos }),
   aim: (seat, angle, power) => ({ t: 'aim', seat, angle, power }),
   result: (r) => ({ t: 'result', ...r }),
+  state: (room) => ({ t: 'state', room }),
   err: (code, msg) => ({ t: 'err', code, msg }),
   pong: (ts) => ({ t: 'pong', ts }),
   peer: (state) => ({ t: 'peer', state }),
