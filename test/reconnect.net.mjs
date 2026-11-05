@@ -80,7 +80,22 @@ try {
   ok(room2 && room2.players.length === 2, `重连后房间仍 2 人（实际 ${room2 && room2.players.length}）`);
   ok(!lastOf(a2, 'start'), '重连没有触发重新开局');
 
+  // 模拟手机切后台超过 8 秒宽限才回来：仍应拿回原座位和整局进度
   a2.close();
+  await sleep(10000);
+  const a3 = await open();
+  send(a3, { t: 'hello', name: 'A', room: 'rtest', token: 'ta' });
+  await sleep(900);
+
+  const welcome3 = lastOf(a3, 'welcome');
+  const room3 = lastOf(a3, 'room');
+  ok(welcome3 && welcome3.seat === 0, `超时归来座位仍是 0（实际 ${welcome3 && welcome3.seat}）`);
+  ok(room3 && room3.shots === 1, `超时归来 shots 仍是 1（实际 ${room3 && room3.shots}）`);
+  ok(room3 && room3.turn === 1, `超时归来轮次仍是 B（实际 ${room3 && room3.turn}）`);
+  ok(room3 && room3.players.length === 2, `超时归来房间仍 2 人（实际 ${room3 && room3.players.length}）`);
+  ok(!lastOf(a3, 'start'), '超时归来没有触发重新开局');
+
+  a3.close();
   b.close();
 } catch (e) {
   fail++;

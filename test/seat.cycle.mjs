@@ -97,5 +97,43 @@ const ok = (c, m) => { if (c) { pass++; console.log('  PASS', m); } else { fail+
   ok(room.players.length === 2, '拒绝第三人后座位数没有变化');
 }
 
+// 7. 切后台超过 8 秒再回来：本人座位和整局进度必须还在
+//    线上真实事故：旧逻辑先回收「过期座位」再按 token 认人，
+//    把自己删掉后重连被当成新人，房间凑满两人 → startRound 把局面清零。
+{
+  const room = createRoom('r7');
+  const a = seatPlayer(room, { name: 'A', token: 'ta' });
+  const b = seatPlayer(room, { name: 'B', token: 'tb' });
+  room.shots = 7;
+  room.turn = 1;
+  room.group = ['solid', 'stripe'];
+  room.open = false;
+  room.snapshot = { seq: 7, time: 900, balls: [], potted: [] };
+
+  // 两人先后切后台，都超过宽限
+  leavePlayer(room, a.seat, { keepSeat: true });
+  leavePlayer(room, b.seat, { keepSeat: true });
+  for (const p of room.players) { p.goneAt = Date.now() - 30000; p.lastSeen = Date.now() - 30000; }
+
+  const a2 = seatPlayer(room, { name: 'A', token: 'ta', liveSeats: [] });
+  ok(a2.reconnected === true, '超时归来仍按 token 认回（A）');
+  ok(a2.seat === 0, `超时归来座位仍是 0（实际 ${a2.seat}）`);
+
+  const b2 = seatPlayer(room, { name: 'B', token: 'tb', liveSeats: [0] });
+  ok(b2.reconnected === true, '超时归来仍按 token 认回（B）');
+  ok(b2.seat === 1, `超时归来座位仍是 1（实际 ${b2.seat}）`);
+
+  ok(room.shots === 7, `整局杆数保留（实际 ${room.shots}）`);
+  ok(room.turn === 1, `轮次保留（实际 ${room.turn}）`);
+  ok(room.group[0] === 'solid' && room.group[1] === 'stripe', '定组保留');
+  ok(room.open === false, '开球状态保留');
+  ok(room.snapshot && room.snapshot.seq === 7, '快照保留');
+  ok(room.players.length === 2, '没有产生重复座位');
+
+  // 真离开的死座仍然要能被回收，不能因为这次修复永久占位
+  leavePlayer(room, a.seat); leavePlayer(room, b.seat);
+  ok(room.players.length === 0, '真离开后座位被释放');
+}
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

@@ -849,8 +849,12 @@ function updateHud(v) {
   el.overlay.classList.add('hidden');
 
   if (v.phase === 'wait') {
+    // 手机上没有「本地双人」按钮，提示必须按屏幕宽度切换，别给出点不到的入口
+    const compact = window.matchMedia('(max-width: 760px)').matches;
     setStatus(transport.mode === 'net'
-      ? '等待对手加入 · 把本页地址发给对方，或点右下角「本地双人」自己先打'
+      ? (compact
+        ? '等待对手加入 · 点「房间」复制邀请链接'
+        : '等待对手加入 · 把本页地址发给对方，或点右下角「本地双人」自己先打')
       : '等待开局…');
   } else if (v.phase === 'run') setStatus('球在滚动…');
   else if (v.canPlace) {

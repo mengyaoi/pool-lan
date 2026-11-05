@@ -544,11 +544,17 @@ button.off { opacity: .45; }
   /* 竖屏也要看得到「轮到你 / 房间号」：HUD 折成两行，状态条单独占一行 */
   #hud { flex-wrap: wrap; align-items: stretch; }
   #center { display: flex; order: 3; flex: 1 0 100%; gap: 2px; padding-top: 1px; }
-  #status { font-size: 11px; padding: 4px 12px; }
+  /* 竖屏宽度有限：允许两行，否则关键提示会被省略号截掉 */
+  #status {
+    font-size: 11px; padding: 4px 12px;
+    white-space: normal; text-align: center; line-height: 1.45;
+  }
   .roombar { padding: 0 6px; }
   .roombar #room { font-size: 9.5px; }
   #stage {
-    flex: 1 1 auto;
+    /* 必须是 0 而不是 auto：canvas 的固有宽高比会反过来决定 flex-basis，
+       短屏上会把舞台压成一条横带，导致球桌不再按竖屏旋转铺满。 */
+    flex: 1 1 0;
     align-self: stretch;
     min-height: 0;
     aspect-ratio: auto;
@@ -649,6 +655,10 @@ body.rotate-guide #stage { display: none; }
 #rotate.hidden { display: none; }
 
 @media (max-width: 760px) {
+  /* 窄屏结算面板留出边距，320px 宽的手机上不能贴死屏幕两侧 */
+  #overlay { padding: 16px; }
+  #overlay .panel { min-width: 0; width: min(100%, 320px); padding: 26px 20px 22px; border-radius: 22px; }
+  #ovScore { font-size: 40px; }
   #hud { padding: 9px 10px 5px; gap: 7px; }
   .pcard { min-width: 0; flex: 1; padding: 7px 9px; gap: 8px; border-radius: 16px; }
   .avatar { width: 32px; height: 32px; flex-basis: 32px; font-size: 13px; }
@@ -874,3 +884,31 @@ body.fake-landscape .hint { display: none; }
 body.fake-landscape .btns { display: flex; flex: 0 0 auto; gap: 6px; }
 body.fake-landscape #btnLocal { display: inline-block; }
 body.fake-landscape button { padding: 6px 10px; font-size: 10.5px; border-radius: 9px; }
+
+/* ---------------- 短竖屏（320×568 一类） ---------------- */
+/* 放在最后覆盖前面 760px / 560px 的尺寸规则：上下栏压薄后，
+   舞台重新满足「高 > 宽」，球桌才会走竖屏旋转铺满，而不是缩成一条横带。 */
+@media (max-aspect-ratio: 1/1) and (max-height: 620px) {
+  #hud { padding: 5px 8px 1px; gap: 3px; }
+  .pcard { padding: 4px 8px; gap: 6px; border-radius: 13px; }
+  .avatar { width: 24px; height: 24px; flex-basis: 24px; font-size: 10px; }
+  .pname { font-size: 10.5px; max-width: 60px; }
+  .ptask { font-size: 9px; }
+  #status { font-size: 9.5px; padding: 2px 8px; line-height: 1.3; }
+  .roombar { padding: 0 4px; }
+  .roombar #room { font-size: 8.5px; }
+  #stage { margin: 3px 6px 5px; }
+  #dock {
+    margin: 2px 6px 4px;
+    padding: 3px 6px;
+    gap: 3px 6px;
+    border-radius: 13px;
+  }
+  #spinbox { padding: 1px 6px 1px 1px; gap: 5px; border-radius: 10px; }
+  #spin-canvas { width: 32px; height: 32px; flex-basis: 32px; }
+  .spin-hint { font-size: 9px; padding: 1px 5px; }
+  .power-label { font-size: 9.5px; }
+  .power-track { height: 7px; }
+  .btns { gap: 4px; }
+  button { padding: 4px 6px; font-size: 9.5px; border-radius: 7px; }
+}
