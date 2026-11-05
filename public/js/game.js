@@ -686,7 +686,11 @@ function initRoomPanel() {
 }
 
 const portraitMQ = window.matchMedia('(max-aspect-ratio: 1/1)');
-let rotateDismissed = false;
+// 用户选择「直接用竖屏玩」后要记住：刷新/锁屏回来不该再被引导页挡住对局
+const ROTATE_SKIP_KEY = 'pool_rotate_skip';
+let rotateDismissed = (() => {
+  try { return localStorage.getItem(ROTATE_SKIP_KEY) === '1'; } catch { return false; }
+})();
 let fakeLandscape = false;
 
 /** 系统不让锁方向时，把界面自己转 90°（CSS transform），保证一定能横过来 */
@@ -708,8 +712,6 @@ function syncRotateGuide() {
     document.body.classList.remove('rotate-guide');
     return;
   }
-  // 转回横屏时清掉“先玩着”的状态，下次竖屏还会提醒
-  if (!portrait) rotateDismissed = false;
   const show = portrait && !rotateDismissed;
   box.classList.toggle('hidden', !show);
   // 引导层打开时收起球桌：竖屏小画布会把台面压扁，不如先让用户专心选横屏
@@ -718,6 +720,7 @@ function syncRotateGuide() {
 
 function dismissRotateGuide() {
   rotateDismissed = true;
+  try { localStorage.setItem(ROTATE_SKIP_KEY, '1'); } catch { }
   syncRotateGuide();
 }
 
