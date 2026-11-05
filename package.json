@@ -7,7 +7,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/physics.test.mjs && node test/aim-guide.test.mjs && node test/eightball.smoke.mjs && node test/seat.cycle.mjs && node test/sync.result.mjs && node test/shot.reject.mjs && node test/server.int.mjs && node test/place.net.mjs"
+    "test": "node test/physics.test.mjs && node test/aim-guide.test.mjs && node test/eightball.smoke.mjs && node test/seat.cycle.mjs && node test/sync.result.mjs && node test/shot.reject.mjs && node test/server.int.mjs && node test/place.net.mjs && node test/reconnect.net.mjs"
   },
   "engines": {
     "node": ">=18"

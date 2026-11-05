@@ -161,7 +161,9 @@ wss.on('connection', (ws, req) => {
     const set = peers(roomId);
     for (const c of set) if (c.ws === ws) set.delete(c);
     const room = rooms.get(roomId);
-    if (room) broadcastAll(roomId, leavePlayer(room, seat));
+    // 刷新/锁屏回来会先断后连：先保留座位和局面，等同一 token 重连；
+    // 真走了由 seatPlayer 的死座回收（心跳 + 宽限期）清理。
+    if (room) broadcastAll(roomId, leavePlayer(room, seat, { keepSeat: true }));
     if (set.size === 0) clients.delete(roomId);
   };
 
