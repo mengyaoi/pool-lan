@@ -248,8 +248,13 @@ function fireShot() {
   // 没设力量时给一个稳妥的默认值，别让人卡在「点半天没反应」
   if (aim.power < 0.05) aim.power = 0.5;
   const ok = transport.shoot({ angle: aim.angle, power: aim.power, spin: { ...aim.spin } });
-  if (ok) { aim.power = 0; syncPowerHud(); }
+  if (ok) { aim.power = 0; syncPowerHud(); kick(12); }
   else showToast('这杆没能发出去，等这轮结束再试');
+}
+
+/** 轻震动反馈：支持才震，不支持（桌面/部分 iOS）静默跳过 */
+function kick(ms = 10) {
+  try { if (navigator.vibrate) navigator.vibrate(ms); } catch { }
 }
 
 function bindInput() {
@@ -308,17 +313,26 @@ function bindInput() {
     if (!cue) return;
 
     if (dragging) {
-      const maxD = Math.max(54, Math.min(renderer.size.w, renderer.size.h) * 0.4);
       const ax = Math.cos(aim.angle), ay = -Math.sin(aim.angle);   // 屏幕坐标的瞄准方向
       const dx = p.x - dragStart.x, dy = p.y - dragStart.y;
       const pull = dx * ax + dy * ay;                              // 沿瞄准方向（向前为正）
       dragPoint = p;
 
       // 拖动只做一件事：蓄力。角度在按下那一刻就定了，全程不动。
-      if (dragMode === 'pending' && -pull > 8) dragMode = 'power';
+      const DEAD = 6;          // 手指自然抖动不算拉杆
+      if (dragMode === 'pending' && -pull > DEAD + 2) dragMode = 'power';
       if (dragMode === 'power') {
-        // 后拉蓄力：只认「瞄准反方向」的位移，往前推不会误出杆
-        aim.power = Math.min(1, Math.max(0, -pull) / maxD);
+        // 后拉蓄力：只认「瞄准反方向」的位移，往前推不会误出杆。
+        // 行程按「当前角度还能往后拉多远」算，竖着打也够用；
+        // 再用指数曲线让低力度段更细腻，避免轻拉一下就 60%。
+        const backX = -ax, backY = -ay;
+        const roomX = backX > 1e-6 ? (renderer.size.w - dragStart.x) / backX
+          : backX < -1e-6 ? dragStart.x / -backX : Infinity;
+        const roomY = backY > 1e-6 ? (renderer.size.h - dragStart.y) / backY
+          : backY < -1e-6 ? dragStart.y / -backY : Infinity;
+        const maxD = Math.max(90, Math.min(210, Math.min(roomX, roomY) * 0.92));
+        const t = Math.min(1, Math.max(0, (-pull - DEAD) / (maxD - DEAD)));
+        aim.power = Math.pow(t, 1.45);
         syncPowerHud();
       }
     } else if (view.canShoot && e.pointerType === 'mouse') {
@@ -356,7 +370,8 @@ function bindInput() {
     dragMode = null;
     // 只有真的往后拉过才出杆；轻点只负责瞄准，绝不会把球打出去。
     if (pulled && aim.power > 0.05 && view && view.canShoot && view.phase === 'aim') {
-      transport.shoot({ angle: aim.angle, power: aim.power, spin: { ...aim.spin } });
+      const ok = transport.shoot({ angle: aim.angle, power: aim.power, spin: { ...aim.spin } });
+      if (ok) kick(12);
       aim.power = 0;
       aimLockedBallId = null;
     } else if (mode === 'pending' && dragTapWorld && view.canShoot && view.phase === 'aim') {
@@ -406,7 +421,20 @@ function bindInput() {
   // 注意：不要在 pointerleave 里清 power。手机抬手后会紧跟 pointerleave，
   // 一清就把滑杆设好的力量抹掉了，「出杆」于是永远按不动。
 
-  $('#btnRematch').addEventListener('click', () => transport && transport.rematch());
+  // 重新开局会清掉当前分数和球位，误触代价大：3 秒内再点一次才执行。
+  // 用页面内 toast 而不是 confirm()，内嵌浏览器/全屏模式下也能正常显示。
+  let rematchArmedUntil = 0;
+  $('#btnRematch').addEventListener('click', () => {
+    if (!transport) return;
+    const now = performance.now();
+    if (now < rematchArmedUntil) {
+      rematchArmedUntil = 0;
+      transport.rematch();
+      return;
+    }
+    rematchArmedUntil = now + 3000;
+    showToast('再点一次「重新开局」确认（3 秒内）');
+  });
   $('#ovBtn').addEventListener('click', () => { transport && transport.rematch(); });
 
   $('#btnRotateGo').addEventListener('click', () => { enterLandscape(); });
