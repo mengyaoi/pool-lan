@@ -14,6 +14,14 @@ const SPRITE_K = SPS / (2 * SPR);   // 贴图与真实直径的比例
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let dpr = 1, cssW = 0, cssH = 0, scale = 1, cx = 0, cy = 0;
+  // 逻辑画布：竖屏旋转后仍是「横屏」尺寸，所有绘制/命中都用这套坐标
+  let viewW = 0, viewH = 0;
+  // 竖屏时把台面转 90° 铺满屏幕：球和袋口能放大近一倍，手指也更好点。
+  let quarterTurn = false;
+  /** 屏幕位移换算到逻辑坐标：竖屏台面转了 90°，手势方向也要一起转 */
+  function screenDelta(dx, dy) {
+    return quarterTurn ? { x: dy, y: -dx } : { x: dx, y: dy };
+  }
   let staticLayer = null;
   const sprites = new Map();
 
@@ -22,10 +30,20 @@ export function createRenderer(canvas) {
   const sy = (y) => cy - y * scale;          // 物理 y 向上 → 屏幕 y 向下
 
   function screenToWorld(px, py) {
+    if (quarterTurn) {
+      // 屏幕坐标逆变换回逻辑画布坐标后，再走常规反投影
+      const lx = py, ly = cssW - px;
+      return { x: (lx - cx) / scale, y: -(ly - cy) / scale };
+    }
     return { x: (px - cx) / scale, y: -(py - cy) / scale };
   }
   function worldToScreen(x, y) {
-    return { x: cx + x * scale, y: cy - y * scale };
+    const lx = cx + x * scale;
+    const ly = cy - y * scale;
+    if (quarterTurn) {
+      return { x: cssW - ly, y: lx };
+    }
+    return { x: lx, y: ly };
   }
 
   /* ---------------- 球贴图 ---------------- */
@@ -101,8 +119,8 @@ export function createRenderer(canvas) {
   /* ---------------- 静态桌面（缓存） ---------------- */
   function buildStatic() {
     const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round(cssW * dpr));
-    c.height = Math.max(1, Math.round(cssH * dpr));
+    c.width = Math.max(1, Math.round(viewW * dpr));
+    c.height = Math.max(1, Math.round(viewH * dpr));
     const g = c.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
 
@@ -325,12 +343,12 @@ export function createRenderer(canvas) {
 
   /* ---------------- 背景 ---------------- */
   function drawBackdrop() {
-    const bg = ctx.createRadialGradient(cssW * 0.5, cssH * 0.42, 0, cssW * 0.5, cssH * 0.5, Math.max(cssW, cssH) * 0.82);
+    const bg = ctx.createRadialGradient(viewW * 0.5, viewH * 0.42, 0, viewW * 0.5, viewH * 0.5, Math.max(viewW, viewH) * 0.82);
     bg.addColorStop(0, '#12211a');
     bg.addColorStop(0.55, '#0a1511');
     bg.addColorStop(1, '#050a08');
     ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, cssW, cssH);
+    ctx.fillRect(0, 0, viewW, viewH);
   }
 
   /* ---------------- 球 ---------------- */
@@ -891,6 +909,10 @@ export function createRenderer(canvas) {
     dpr = Math.min(2.5, window.devicePixelRatio || 1);
     cssW = Math.max(320, rect.width);
     cssH = Math.max(200, rect.height);
+    // 竖屏（非软件横屏）把球桌转 90°：逻辑画布与物理屏幕宽高互换。
+    quarterTurn = !rotated && cssH > cssW;
+    viewW = quarterTurn ? cssH : cssW;
+    viewH = quarterTurn ? cssW : cssH;
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -898,9 +920,9 @@ export function createRenderer(canvas) {
     // 手机横屏 HUD/操作栏是悬浮层，桌边留一点空隙避免被按钮压住。
     // 整桌始终完整入镜：任何方向都用同一个留白系数，绝不裁切袋口。
     const pad = 0.985;
-    scale = Math.min(cssW / OUTER_W, cssH / OUTER_H) * pad;
-    cx = cssW / 2;
-    cy = cssH / 2;
+    scale = Math.min(viewW / OUTER_W, viewH / OUTER_H) * pad;
+    cx = viewW / 2;
+    cy = viewH / 2;
     staticLayer = buildStatic();
     resizeFxLayer();
   }
@@ -909,8 +931,10 @@ export function createRenderer(canvas) {
     const now = state.now != null ? state.now : performance.now();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
+    // 竖屏：整张逻辑画布顺时针转 90°，铺满物理竖屏
+    if (quarterTurn) ctx.setTransform(0, dpr, -dpr, 0, cssW * dpr, 0);
     drawBackdrop();
-    if (staticLayer) ctx.drawImage(staticLayer, 0, 0, cssW, cssH);
+    if (staticLayer) ctx.drawImage(staticLayer, 0, 0, viewW, viewH);
 
     drawBalls(state.balls);
 
@@ -935,6 +959,8 @@ export function createRenderer(canvas) {
     }
 
     drawEffects(state.effects);
+    // 放大镜按物理屏幕坐标定位：先回到未旋转坐标系再画
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (state.magnifier) drawMagnifier(state.magnifier);
     // 彩带画在最上层（DOM overlay 之下、所有 canvas 内容之上）
     drawConfetti(now);
@@ -959,6 +985,7 @@ export function createRenderer(canvas) {
     mg.setTransform(1, 0, 0, 1, 0, 0);
     mg.clearRect(0, 0, size, size);
     const srcHalf = (R_MAG / zoom) * dpr;
+    // m.tx/ty 来自 worldToScreen，已经是物理屏幕坐标，直接截取
     const sx2 = m.tx * dpr - srcHalf;
     const sy2 = m.ty * dpr - srcHalf;
     mg.drawImage(canvas, sx2, sy2, srcHalf * 2, srcHalf * 2, 0, 0, size, size);
@@ -990,7 +1017,8 @@ export function createRenderer(canvas) {
     celebrate,
     screenToWorld,
     worldToScreen,
+    screenDelta,
     get scale() { return scale; },
-    get size() { return { w: cssW, h: cssH }; },
+    get size() { return { w: viewW, h: viewH }; },
   };
 }

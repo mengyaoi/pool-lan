@@ -369,7 +369,11 @@ function bindInput() {
 
     if (dragging) {
       const ax = Math.cos(aim.angle), ay = -Math.sin(aim.angle);   // 屏幕坐标的瞄准方向
-      const dx = p.x - dragStart.x, dy = p.y - dragStart.y;
+      // 竖屏球桌转了 90°，手指位移要先换到台面方向再算拉杆
+      const delta = renderer.screenDelta
+        ? renderer.screenDelta(p.x - dragStart.x, p.y - dragStart.y)
+        : { x: p.x - dragStart.x, y: p.y - dragStart.y };
+      const dx = delta.x, dy = delta.y;
       const pull = dx * ax + dy * ay;                              // 沿瞄准方向（向前为正）
       dragPoint = p;
 
@@ -699,10 +703,17 @@ function syncRotateGuide() {
   if (!box) return;
   const portrait = portraitMQ.matches;
   // 应用内横屏时，屏幕物理上仍是竖屏，但界面已经是横屏布局，不能再弹引导
-  if (fakeLandscape) { box.classList.add('hidden'); return; }
+  if (fakeLandscape) {
+    box.classList.add('hidden');
+    document.body.classList.remove('rotate-guide');
+    return;
+  }
   // 转回横屏时清掉“先玩着”的状态，下次竖屏还会提醒
   if (!portrait) rotateDismissed = false;
-  box.classList.toggle('hidden', !portrait || rotateDismissed);
+  const show = portrait && !rotateDismissed;
+  box.classList.toggle('hidden', !show);
+  // 引导层打开时收起球桌：竖屏小画布会把台面压扁，不如先让用户专心选横屏
+  document.body.classList.toggle('rotate-guide', show);
 }
 
 function dismissRotateGuide() {
