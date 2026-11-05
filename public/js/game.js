@@ -77,11 +77,12 @@ let view = null;                      // 本帧缓存（getter 会推进物理�
 let aim = { angle: 0, power: 0, spin: { a: 0, b: 0 }, pred: null, showCue: true };
 let dragging = false;
 let dragStart = { x: 0, y: 0 };
-let dragMode = null;                  // 'aim' = 拖动改角度，'power' = 后拉蓄力
+let dragMode = null;                  // 'pending' = 还没拖动（轻点瞄准），'power' = 拖动蓄力
 let aimLockedBallId = null;           // 最近一次点中的目标球（只用于提示）
-let dragStartAngle = 0;               // 按下瞬间的球杆角度（相对旋转用）
-let dragCueVec = { x: 0, y: 0 };      // 按下瞬间「手指相对母球」的向量
 let dragTapWorld = null;              // 按下点（世界坐标），仅在「轻点」时用来瞄准
+let dragPoint = { x: 0, y: 0 };       // 手指当前位置（画布局部坐标），放大镜跟着它走
+let magnifier = null;                 // 拖动蓄力时手指上方的放大镜
+let dragPointerType = 'touch';        // 鼠标不弹放大镜，只有手指才需要
 let placing = false;                  // 自由球：正在拖动母球摆位
 let placePos = { x: 0, y: 0 };
 let toastTimer = null;
@@ -277,15 +278,20 @@ function bindInput() {
     if (!cue) return;
     const w = renderer.screenToWorld(p.x, p.y);
     dragTapWorld = w;                // 先记下按下的位置，抬起时若是「轻点」才用它瞄准
-    // 关键：按下时绝不动角度。否则你刚瞄好、准备后拉出杆的那一下，杆会突然跳掉。
-    // 角度只由「横滑」或「轻点球」改变，后拉只负责蓄力。
-    const cs = renderer.worldToScreen(cue.x, cue.y);
+    // 按在目标球上就当场锁定这个方向；之后拖动只蓄力，角度绝不再变。
+    // 这就是「瞄准」和「出杆」彻底分开：不会出现刚要拉杆、角度突然跳掉。
+    const hitBall = nearestBall(view.balls, w, 32);
+    if (hitBall) {
+      aim.angle = Math.atan2(hitBall.y - cue.y, hitBall.x - cue.x);
+      aimLockedBallId = hitBall.id;
+    }
     dragging = true;
-    dragMode = 'pending';            // 先看手指往哪走：横向 = 转杆，后拉 = 蓄力
+    dragPointerType = e.pointerType || 'touch';
+    dragMode = 'pending';            // 还没拖起来 = 轻点瞄准；拖出去 = 蓄力
     dragStart = p;
-    dragStartAngle = aim.angle;
-    dragCueVec = { x: p.x - cs.x, y: p.y - cs.y };
-    // 注意：这里不清空力量，也不改角度
+    dragPoint = p;
+    aim.power = 0;                   // 每次拉杆都从 0 开始，力度可预期
+    syncPowerHud();
     try { canvas.setPointerCapture(e.pointerId); } catch { }
   });
 
@@ -307,29 +313,14 @@ function bindInput() {
       const ax = Math.cos(aim.angle), ay = -Math.sin(aim.angle);   // 屏幕坐标的瞄准方向
       const dx = p.x - dragStart.x, dy = p.y - dragStart.y;
       const pull = dx * ax + dy * ay;                              // 沿瞄准方向（向前为正）
-      const lateral = Math.abs(dx * ay - dy * ax);                 // 垂直方向偏移
+      dragPoint = p;
 
-      if (dragMode === 'pending') {
-        if (-pull > 10) dragMode = 'power';
-        else if (lateral > 12) dragMode = 'aim';
-      }
-
-      if (dragMode === 'aim') {
-        // 相对旋转：按下的角度 + 手指绕母球扫过的角度差。
-        // 不直接用「指向手指」，所以按下那一下不会跳杆。
-        const cs = renderer.worldToScreen(cue.x, cue.y);
-        const now = { x: p.x - cs.x, y: p.y - cs.y };
-        const a0 = Math.atan2(-dragCueVec.y, dragCueVec.x);   // 屏幕 y 向下，取反成数学角
-        const a1 = Math.atan2(-now.y, now.x);
-        let delta = a1 - a0;
-        while (delta > Math.PI) delta -= Math.PI * 2;
-        while (delta < -Math.PI) delta += Math.PI * 2;
-        aim.angle = dragStartAngle + delta;
-        aimLockedBallId = null;
-        aim.power = 0;
-      } else if (dragMode === 'power') {
+      // 拖动只做一件事：蓄力。角度在按下那一刻就定了，全程不动。
+      if (dragMode === 'pending' && -pull > 8) dragMode = 'power';
+      if (dragMode === 'power') {
         // 后拉蓄力：只认「瞄准反方向」的位移，往前推不会误出杆
         aim.power = Math.min(1, Math.max(0, -pull) / maxD);
+        syncPowerHud();
       }
     } else if (view.canShoot && e.pointerType === 'mouse') {
       // 桌面保留 hover 瞄准；触屏走 pointerdown 定方向
@@ -340,6 +331,16 @@ function bindInput() {
   });
 
   const release = (e) => {
+    // pointercancel 是系统收走了触摸（来电、通知、手势冲突），绝不能当成出杆。
+    if (e && e.type === 'pointercancel') {
+      dragging = false;
+      dragMode = null;
+      dragTapWorld = null;
+      magnifier = null;
+      aim.power = 0;
+      syncPowerHud();
+      return;
+    }
     if (placing) {
       placing = false;
       const ok = transport.canPlaceCue ? transport.canPlaceCue(placePos) : true;
@@ -349,16 +350,17 @@ function bindInput() {
     }
     if (!dragging) return;
     dragging = false;
+    magnifier = null;
     const mode = dragMode;
     const pulled = mode === 'power';
     dragMode = null;
-    // 只有真的向后拉过才算出杆；单击/滑动只是瞄准，不能把已设好的力量误打出去
+    // 只有真的往后拉过才出杆；轻点只负责瞄准，绝不会把球打出去。
     if (pulled && aim.power > 0.05 && view && view.canShoot && view.phase === 'aim') {
       transport.shoot({ angle: aim.angle, power: aim.power, spin: { ...aim.spin } });
       aim.power = 0;
       aimLockedBallId = null;
     } else if (mode === 'pending' && dragTapWorld && view.canShoot && view.phase === 'aim') {
-      // 轻点：不改角度，纯瞄准（点了哪颗球就对准哪颗球）
+      // 轻点：把球杆转向点到的那颗球（点在空处就指向那个方向）。
       const cue = view.balls.find((b) => b.id === 0 && !b.potted);
       if (cue) {
         const target = nearestBall(view.balls, dragTapWorld, 30);
@@ -370,7 +372,9 @@ function bindInput() {
           aimLockedBallId = target ? target.id : null;
         }
       }
+      aim.power = 0;
     }
+    syncPowerHud();
     dragTapWorld = null;
   };
   canvas.addEventListener('pointerup', release);
@@ -731,7 +735,7 @@ function updateHud(v) {
   else if (v.canPlace) {
     setStatus(`自由球 · ${v.names[m.turn]} 抓住白球拖到任意位置（也可直接出杆）`, true);
   } else if (transport.mode === 'net') {
-    if (v.canShoot) setStatus('轮到你了 · 瞄准后按住拉杆', true);
+    if (v.canShoot) setStatus('轮到你了 · 点球瞄准，按住向后拉杆', true);
     else setStatus('对手回合');
   } else {
     setStatus(`轮到 ${v.names[m.turn]} 出杆`, true);
@@ -815,6 +819,30 @@ function loop() {
     aim.showCue = false;
   }
 
+  // 手指下方的小球看不清：在手指上方浮一个放大镜。
+  // 只改「看」，不改坐标，所以不会让瞄准或物理偏移。
+  if (dragging && dragPointerType !== 'mouse' && canAim) {
+    const cs = cue ? renderer.worldToScreen(cue.x, cue.y) : null;
+    const target = aimLockedBallId != null
+      ? view.balls.find((b) => b.id === aimLockedBallId && !b.potted)
+      : null;
+    const focus = dragMode === 'power'
+      ? (cs ? { x: cue.x, y: cue.y } : null)
+      : (target || (dragTapWorld ? dragTapWorld : null));
+    if (focus) {
+      const fp = renderer.worldToScreen(focus.x, focus.y);
+      magnifier = {
+        x: dragPoint.x,
+        y: dragPoint.y,
+        tx: fp.x,
+        ty: fp.y,
+        pow: aim.power,
+      };
+    }
+  } else {
+    magnifier = null;
+  }
+
   // 自由球摆放：把母球画成跟随指针的幽灵球（不改真实物理状态）
   // 注意要放到数组末尾——否则会被球堆盖住，用户看不见自己拖到哪了
   let drawBalls = view.balls;
@@ -838,6 +866,7 @@ function loop() {
     placeHint,
     // 待摆放（还没开始拖）时，给母球一个脉冲"抓手"提示
     grabHint: view.canPlace && !placing ? cue : null,
+    magnifier: magnifier ? { ...magnifier, balls: drawBalls } : null,
     now: nowMs,
   });
 

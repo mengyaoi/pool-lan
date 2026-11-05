@@ -898,8 +898,53 @@ export function createRenderer(canvas) {
     }
 
     drawEffects(state.effects);
+    if (state.magnifier) drawMagnifier(state.magnifier);
     // 彩带画在最上层（DOM overlay 之下、所有 canvas 内容之上）
     drawConfetti(now);
+  }
+
+  /* 手指放大镜：把手指附近的画面放大到手指上方，松手即消失。
+     只是读 canvas 自己再画一份，不改变任何游戏坐标。 */
+  let magCanvas = null;
+  function drawMagnifier(m) {
+    const R_MAG = Math.max(48, Math.min(64, Math.min(cssW, cssH) * 0.14));
+    const zoom = 2.35;
+    // 默认在手指上方；靠近顶部时翻到下方，永远不出画面。
+    const above = m.y - R_MAG - 26;
+    const cy2 = above - R_MAG / 2 >= 4 ? above : m.y + R_MAG + 26;
+    const cx2 = Math.max(R_MAG + 6, Math.min(cssW - R_MAG - 6, m.x));
+
+    // 直接截取当前画面（含台面、球、瞄准线），比重新画一遍更真实
+    if (!magCanvas) magCanvas = document.createElement('canvas');
+    const size = Math.ceil(R_MAG * 2 * dpr);
+    if (magCanvas.width !== size) { magCanvas.width = size; magCanvas.height = size; }
+    const mg = magCanvas.getContext('2d');
+    mg.setTransform(1, 0, 0, 1, 0, 0);
+    mg.clearRect(0, 0, size, size);
+    const srcHalf = (R_MAG / zoom) * dpr;
+    const sx2 = m.tx * dpr - srcHalf;
+    const sy2 = m.ty * dpr - srcHalf;
+    mg.drawImage(canvas, sx2, sy2, srcHalf * 2, srcHalf * 2, 0, 0, size, size);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx2, cy2, R_MAG, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(magCanvas, cx2 - R_MAG, cy2 - R_MAG, R_MAG * 2, R_MAG * 2);
+    ctx.restore();
+
+    // 镜片边框 + 准星
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx2, cy2, R_MAG, 0, Math.PI * 2);
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(53,224,140,0.9)';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx2, cy2, 3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fill();
+    ctx.restore();
   }
 
   return {
