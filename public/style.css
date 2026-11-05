@@ -909,6 +909,8 @@ body.fake-landscape button { padding: 6px 10px; font-size: 10.5px; border-radius
   .spin-hint { font-size: 9px; padding: 1px 5px; }
   .power-label { font-size: 9.5px; }
   .power-track { height: 7px; }
+  /* 触控目标不能为了塞下台面缩到 22px，拇指点不准 */
+  #aimNudge button { width: 34px; min-height: 28px; font-size: 16px; }
   .btns { gap: 4px; }
-  button { padding: 4px 6px; font-size: 9.5px; border-radius: 7px; }
+  button { padding: 7px 8px; font-size: 10.5px; border-radius: 8px; }
 }
