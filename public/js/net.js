@@ -142,7 +142,7 @@ export function createLocalTransport({ names = ['玩家 1', '玩家 2'] } = {}) 
     aim() {},
     setPro(on) {
       pro = !!on;
-      push({ kind: 'toast', text: pro ? '高手模式已开启：不显示瞄准辅助线' : '高手模式已关闭：恢复辅助线' });
+      push({ kind: 'toast', text: pro ? '高手模式已开启：只保留前段瞄准线，关闭后续预测' : '高手模式已关闭：恢复完整辅助线' });
       return true;
     },
     rematch() {

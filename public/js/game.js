@@ -885,7 +885,7 @@ function updateHud(v) {
   else if (v.canPlace) {
     setStatus(`自由球 · ${v.names[m.turn]} 抓住白球拖到任意位置（也可直接出杆）`, true);
   } else if (transport.mode === 'net') {
-    if (v.canShoot) setStatus(v.pro ? '高手模式 · 轮到你了（无辅助线）' : '轮到你了 · 点球瞄准，按住向后拉杆', true);
+    if (v.canShoot) setStatus(v.pro ? '高手模式 · 只显示前段瞄准线' : '轮到你了 · 点球瞄准，按住向后拉杆', true);
     else setStatus('对手回合');
   } else {
     setStatus(`轮到 ${v.names[m.turn]} 出杆`, true);
@@ -961,9 +961,8 @@ function loop() {
   const canAim = view.canShoot && view.phase === 'aim' && cue && !placing && !view.canPlace;
 
   if (canAim) {
-    // 高手模式：完全不算预测线，避免为了「不画」还偷偷算几何。
-    // 球杆仍显示，否则连朝哪边打都看不出。
-    aim.pred = view.pro ? null : predictAim({ balls: view.balls }, aim.angle);
+    // 高手模式保留「白球 → 第一颗球」的瞄准线，只关闭击球后的预测。
+    aim.pred = predictAim({ balls: view.balls }, aim.angle);
     aim.showCue = true;
     // 每帧按当前目标球找最近袋口：球动过或已落袋时不会留着旧路线。
     const tgt = aimLockedBallId != null
@@ -1022,6 +1021,7 @@ function loop() {
       targetId: aimLockedBallId,
       targetLegal: aimLockedBallId != null ? isLegalTarget(view.match, aimLockedBallId) : true,
       guide: aimGuide,
+      pro: !!view.pro,
     },
     // 高手模式下对手的瞄准射线也算辅助，一并关掉
     opponentAim: view.pro ? null : smoothOpponentAim(view.opponentAim),

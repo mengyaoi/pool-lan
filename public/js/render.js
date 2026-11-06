@@ -504,7 +504,7 @@ export function createRenderer(canvas) {
   }
 
   /* ---------------- 瞄准辅助 ---------------- */
-  function drawAimLine(cuePos, pred, alpha) {
+  function drawAimLine(cuePos, pred, alpha, pro = false) {
     const from = { x: sx(cuePos.x), y: sy(cuePos.y) };
     const to = { x: sx(pred.hit.x), y: sy(pred.hit.y) };
 
@@ -519,6 +519,13 @@ export function createRenderer(canvas) {
     ctx.lineTo(to.x, to.y);
     ctx.stroke();
     ctx.shadowBlur = 0;
+
+    // 高手模式：只留白球到第一颗球这一段「前段线」。
+    // 幽灵球、目标球去向、库边反弹都属于击球后的预测，不画。
+    if (pro) {
+      ctx.restore();
+      return;
+    }
 
     if (pred.ghost) {
       // 幽灵球：半透明填充 + 实线轮廓，一眼能看出母球该停在哪
@@ -950,10 +957,11 @@ export function createRenderer(canvas) {
       drawOpponentRay(cue, state.opponentAim.angle);
     }
     if (state.aim && state.aim.pred && cue) {
-      if (state.aim.targetId != null) {
+      // 高手模式连目标球提示环也视为辅助，只保留前段瞄准线。
+      if (!state.aim.pro && state.aim.targetId != null) {
         drawTargetRing(state.balls, state.aim.targetId, state.now, state.aim.targetLegal !== false);
       }
-      drawAimLine(cue, state.aim.pred, 0.55);
+      drawAimLine(cue, state.aim.pred, 0.55, state.aim.pro === true);
       if (state.aim.guide) drawPocketGuide(state.aim.guide);
       if (state.aim.showCue) drawCue(cue, state.aim.angle, state.aim.power);
     }
