@@ -6,7 +6,7 @@
  *   2) 重连时旧连接没被踢掉 → 座位上挂两个连接 → 广播发不到真人
  */
 import {
-  createRoom, seatPlayer, leavePlayer, publicRoom,
+  createRoom, seatPlayer, leavePlayer, publicRoom, setProMode,
 } from '../lib/room.mjs';
 
 let pass = 0, fail = 0;
@@ -133,6 +133,32 @@ const ok = (c, m) => { if (c) { pass++; console.log('  PASS', m); } else { fail+
   // 真离开的死座仍然要能被回收，不能因为这次修复永久占位
   leavePlayer(room, a.seat); leavePlayer(room, b.seat);
   ok(room.players.length === 0, '真离开后座位被释放');
+}
+
+// 8. 高手模式是房间级设置：一方开启，另一方看到的状态必须跟着变
+{
+  const room = createRoom('r8');
+  seatPlayer(room, { name: 'A', token: 'ta' });
+  seatPlayer(room, { name: 'B', token: 'tb' });
+  ok(publicRoom(room).pro === false, '默认关闭辅助线限制（普通模式）');
+
+  const on = setProMode(room, 0, true);
+  ok(on.ok === true, 'A 可以开启高手模式');
+  ok(publicRoom(room).pro === true, '房间状态变成高手模式');
+  const ev = on.events.find((e) => e.t === 'pro');
+  ok(!!ev && ev.on === true, '广播 pro 事件且 on=true');
+  ok(!!ev && ev.seat === 0, 'pro 事件带切换者座位');
+
+  const again = setProMode(room, 1, true);
+  ok(again.ok === true && again.events.length === 0, '重复开启不重复广播');
+
+  const off = setProMode(room, 1, false);
+  ok(publicRoom(room).pro === false, 'B 可以关闭高手模式');
+  ok(!!off.events.find((e) => e.t === 'pro' && e.on === false), '关闭也广播 pro 事件');
+
+  const bad = setProMode(room, -1, true);
+  ok(bad.ok === false, '没有座位的人不能切换高手模式');
+  ok(publicRoom(room).pro === false, '无效切换不改变房间状态');
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

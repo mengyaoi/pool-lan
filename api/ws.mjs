@@ -14,7 +14,7 @@ import { WebSocketServer } from 'ws';
 import { normalizeRoom, out, PROTOCOL } from '../lib/protocol.mjs';
 import {
   createRoom, publicRoom, seatPlayer, acceptShot, acceptPlace,
-  reportShot, requestRematch, leavePlayer, recoverStalled,
+  reportShot, requestRematch, leavePlayer, recoverStalled, setProMode,
 } from '../lib/room.mjs';
 
 /** 房间表：同实例内共享。进程被回收时房间也随之消失（客户端会重连重建）。 */
@@ -146,6 +146,12 @@ wss.on('connection', (ws, req) => {
       case 'rematch': {
         const r = requestRematch(room, seat);
         if (r.ok) broadcastAll(roomId, r.events);
+        break;
+      }
+
+      case 'pro': {
+        const r = setProMode(room, seat, msg.on);
+        if (r.ok && r.events.length) broadcastAll(roomId, r.events);
         break;
       }
 

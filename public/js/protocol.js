@@ -105,6 +105,7 @@ export const out = {
     ballInHand: room.ballInHand,
     snapshot: room.snapshot || null,
     shots: room.shots || 0,
+    pro: !!room.pro,
   }),
   start: (breaker, seed, round) => ({ t: 'start', breaker, seed, round }),
   turn: (p) => ({ t: 'turn', p }),
@@ -118,6 +119,7 @@ export const out = {
   result: (r) => ({ t: 'result', ...r }),
   state: (room) => ({ t: 'state', room }),
   err: (code, msg) => ({ t: 'err', code, msg }),
+  proMode: (on, seat) => ({ t: 'pro', on, seat }),
   pong: (ts) => ({ t: 'pong', ts }),
   peer: (state) => ({ t: 'peer', state }),
 };

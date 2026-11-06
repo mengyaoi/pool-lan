@@ -516,6 +516,18 @@ function bindInput() {
     if (on) audio.unlock();
   });
 
+  // 高手模式：房间级开关，任何一方切换后双方同时生效
+  $('#btnPro').addEventListener('click', (e) => {
+    if (!transport || typeof transport.setPro !== 'function') return;
+    const v = transport.view;
+    const next = !v.pro;
+    if (transport.setPro(next)) {
+      e.currentTarget.textContent = next ? '高手模式 开' : '高手模式';
+      e.currentTarget.classList.toggle('on', next);
+      audio.unlock();
+    }
+  });
+
   $('#btnLocal').addEventListener('click', () => {
     if (transport && transport.mode === 'local') {
       // 再点一次回到联机：之前切到本地后没有回头路，只能手动改网址
@@ -816,6 +828,12 @@ function renderTask(node, group, potted) {
 
 function updateHud(v) {
   const m = v.match;
+  // 高手模式可能是对方切换的：按钮状态必须跟着房间状态走，不能只在自己点击时改
+  const proBtn = $('#btnPro');
+  if (proBtn) {
+    proBtn.textContent = v.pro ? '高手模式 开' : '高手模式';
+    proBtn.classList.toggle('on', !!v.pro);
+  }
   const pottedAll = m.potted || [];
   const g0 = m.group ? m.group[0] : null;
   const g1 = m.group ? m.group[1] : null;
@@ -867,7 +885,7 @@ function updateHud(v) {
   else if (v.canPlace) {
     setStatus(`自由球 · ${v.names[m.turn]} 抓住白球拖到任意位置（也可直接出杆）`, true);
   } else if (transport.mode === 'net') {
-    if (v.canShoot) setStatus('轮到你了 · 点球瞄准，按住向后拉杆', true);
+    if (v.canShoot) setStatus(v.pro ? '高手模式 · 轮到你了（无辅助线）' : '轮到你了 · 点球瞄准，按住向后拉杆', true);
     else setStatus('对手回合');
   } else {
     setStatus(`轮到 ${v.names[m.turn]} 出杆`, true);
@@ -943,13 +961,15 @@ function loop() {
   const canAim = view.canShoot && view.phase === 'aim' && cue && !placing && !view.canPlace;
 
   if (canAim) {
-    aim.pred = predictAim({ balls: view.balls }, aim.angle);
+    // 高手模式：完全不算预测线，避免为了「不画」还偷偷算几何。
+    // 球杆仍显示，否则连朝哪边打都看不出。
+    aim.pred = view.pro ? null : predictAim({ balls: view.balls }, aim.angle);
     aim.showCue = true;
     // 每帧按当前目标球找最近袋口：球动过或已落袋时不会留着旧路线。
     const tgt = aimLockedBallId != null
       ? view.balls.find((b) => b.id === aimLockedBallId && !b.potted)
       : null;
-    aimGuide = tgt ? bestPocketGuide(view.balls, tgt) : null;
+    aimGuide = (!view.pro && tgt) ? bestPocketGuide(view.balls, tgt) : null;
     if (!dragging) transport.aim({ angle: aim.angle, power: aim.power, spin: aim.spin });
   } else {
     aim.pred = null;
@@ -1003,7 +1023,8 @@ function loop() {
       targetLegal: aimLockedBallId != null ? isLegalTarget(view.match, aimLockedBallId) : true,
       guide: aimGuide,
     },
-    opponentAim: smoothOpponentAim(view.opponentAim),
+    // 高手模式下对手的瞄准射线也算辅助，一并关掉
+    opponentAim: view.pro ? null : smoothOpponentAim(view.opponentAim),
     isMyTurn: view.canShoot,
     effects: collectEffects(nowMs),
     placeHint,

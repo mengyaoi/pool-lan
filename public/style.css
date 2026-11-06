@@ -493,6 +493,13 @@ button.primary:hover { filter: brightness(1.07); transform: translateY(-1px); }
 button.primary:active { transform: translateY(1px); box-shadow: inset 0 2px 6px rgba(0,0,0,.3), 0 4px 10px -6px rgba(47,208,127,.8); }
 button.big { padding: 13px 38px; font-size: 14.5px; border-radius: 14px; }
 button.off { opacity: .45; }
+/* 高手模式激活态：金色边框，和绿色主操作按钮区分开 */
+button.ghost.on {
+  color: #ffe4a6;
+  background: linear-gradient(180deg, rgba(243,201,107,.3), rgba(243,201,107,.1));
+  border-color: rgba(243,201,107,.55);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 0 16px -6px rgba(243,201,107,.75);
+}
 
 /* ---------------- 结算 ---------------- */
 #overlay {

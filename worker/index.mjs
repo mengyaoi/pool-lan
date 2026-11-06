@@ -14,7 +14,7 @@
 import { normalizeRoom, out, PROTOCOL } from '../lib/protocol.mjs';
 import {
   createRoom, publicRoom, seatPlayer, acceptShot, acceptPlace,
-  reportShot, requestRematch, leavePlayer, recoverStalled,
+  reportShot, requestRematch, leavePlayer, recoverStalled, setProMode,
 } from '../lib/room.mjs';
 
 export default {
@@ -198,6 +198,11 @@ export class RoomDO {
       case 'rematch': {
         const r = requestRematch(room, seat);
         if (r.ok) { this.broadcastAll(r.events); await this.save(); }
+        break;
+      }
+      case 'pro': {
+        const r = setProMode(room, seat, msg.on);
+        if (r.ok && r.events.length) { this.broadcastAll(r.events); await this.save(); }
         break;
       }
     }

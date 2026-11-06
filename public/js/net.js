@@ -30,6 +30,7 @@ export function createLocalTransport({ names = ['玩家 1', '玩家 2'] } = {}) 
   const world = createWorld();
   rack15(world, (Date.now() % 90000) + 7);
   const match = createMatch();
+  let pro = false;           // 高手模式：隐藏所有瞄准辅助线
 
   let acc = 0;
   let lastT = performance.now();
@@ -112,6 +113,7 @@ export function createLocalTransport({ names = ['玩家 1', '玩家 2'] } = {}) 
         opponentAim: null,
         effects,
         names,
+        pro,
       };
     },
     /** 自由球摆放：同屏直接落到本地物理世界 */
@@ -138,6 +140,11 @@ export function createLocalTransport({ names = ['玩家 1', '玩家 2'] } = {}) 
       return true;
     },
     aim() {},
+    setPro(on) {
+      pro = !!on;
+      push({ kind: 'toast', text: pro ? '高手模式已开启：不显示瞄准辅助线' : '高手模式已关闭：恢复辅助线' });
+      return true;
+    },
     rematch() {
       rack15(world, (Date.now() % 90000) + 11);
       Object.assign(match, createMatch());
@@ -197,6 +204,7 @@ export function createNetTransport(url, { onStatus } = {}) {
   let error = null;
   let disposed = false;
   let fatal = false;
+  let pro = false;             // 高手模式：房间级开关，服务端下发为准
   // 座位凭据必须在第一次连接前就生成：服务器按 URL/hello 里的 token 认人，
   // 如果等 welcome 才生成，首次连接存下的是空 token，刷新后就认不回原座位。
   let token = '';
@@ -221,6 +229,7 @@ export function createNetTransport(url, { onStatus } = {}) {
     connected: false,
     error: null,
     latency: 0,
+    pro: false,
   };
 
   function send(obj) {
@@ -244,11 +253,13 @@ export function createNetTransport(url, { onStatus } = {}) {
     world = null;
     settling = false;
     seat = -1;
+    pro = false;
     Object.assign(match, createMatch());
     match.phase = 'wait';
     view.phase = 'wait';
     view.balls = [];
     view.error = null;
+    view.pro = false;
     try { if (ws) ws.close(); } catch { }
     connect();
     return true;
@@ -522,6 +533,7 @@ export function createNetTransport(url, { onStatus } = {}) {
 
       case 'room': {
         players = m.players || [];
+        if (typeof m.pro === 'boolean') pro = m.pro;
         // Vercel 的连接可能落到不同实例，此时两人各看到一个「只有自己」的房间。
         // 超过 10s 仍未凑齐两人，就明说这个问题，别让用户对着空白球桌干等。
         if (players.length < 2 && !waitWarnTimer) {
@@ -666,6 +678,11 @@ export function createNetTransport(url, { onStatus } = {}) {
         queue.push({ kind: 'toast', text: m.text });
         break;
 
+      case 'pro':
+        pro = !!m.on;
+        view.pro = pro;
+        break;
+
       case 'pong':
         if (pingAt) {
           const sample = performance.now() - pingAt;
@@ -735,6 +752,7 @@ export function createNetTransport(url, { onStatus } = {}) {
       view.error = error;
       view.roomId = room;
       view.latency = Math.round(rtt);
+      view.pro = pro;
       return view;
     },
     placeCue(pos) {
@@ -775,6 +793,14 @@ export function createNetTransport(url, { onStatus } = {}) {
       lastAimAngle = shot.angle;
       lastAimPower = shot.power;
       send({ t: 'aim', angle: shot.angle, power: shot.power });
+    },
+    /** 高手模式是房间级设置：发到服务端后由服务端广播给双方 */
+    setPro(on) {
+      if (seat < 0) return false;
+      pro = !!on;
+      view.pro = pro;
+      send({ t: 'pro', on: pro });
+      return true;
     },
     rematch() { send({ t: 'rematch' }); },
     reconnectTo,
